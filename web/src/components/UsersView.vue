@@ -71,7 +71,7 @@ async function toggleDisabled(u: User) {
               <span v-if="u.sessions.length > 2" class="muted">+{{ u.sessions.length - 2 }}</span>
             </template>
           </span>
-          <span class="u-cell" data-label="权限">{{ u.role === 'admin' ? '全部' : u.can_create ? '可新建会话' : '只读授权' }}</span>
+          <span class="u-cell" data-label="权限">{{ u.role === 'admin' ? '新建/删除会话' : '仅授权会话' }}</span>
           <span class="u-cell faint" data-label="登录" :title="time(u.last_login_at || undefined)">{{ u.last_login_at ? shortTime(u.last_login_at) : '从未' }}</span>
           <span class="u-actions">
             <button class="btn sm" @click="editor?.open(u)"><Icon name="pencil" :size="13" />编辑</button>
@@ -84,7 +84,7 @@ async function toggleDisabled(u: User) {
           <Icon name="users" :size="18" /><span>{{ users.list.length ? '没有匹配的用户' : '还没有用户' }}</span>
         </div>
       </div>
-      <p class="users-foot muted"><Icon name="key" :size="12" />访问令牌（WEBHOOK_TOKEN）始终拥有全部权限，可用于 Webhook 集成和找回管理员。</p>
+      <p class="users-foot muted"><Icon name="key" :size="12" />只有管理员可以新建和删除会话；普通用户只能查看被授权的会话并在其中发消息。访问令牌（WEBHOOK_TOKEN）始终拥有全部权限，可用于 Webhook 集成和找回管理员。</p>
     </div>
     <UserDialog ref="editor" />
     <dialog ref="pwDialog" class="dialog" @click.self="pwDialog?.close()">

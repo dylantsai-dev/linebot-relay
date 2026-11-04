@@ -405,18 +405,16 @@ function authenticate(req) {
   const found = match && users.authenticate(match[1]);
   return found ? { kind: 'user', admin: found.user.role === 'admin', user: found.user, tokenHash: found.tokenHash } : null;
 }
-function canSee(principal, key) { return principal.admin || users.isGranted(principal.user.id, key); }
-function canCreate(principal) { return principal.admin || principal.user.can_create; }
-function sessionKnown(key) { return !!sessions[key] || live.has(key) || fs.existsSync(path.join(historyDir, `${safeKey(key)}.jsonl`)) || users.anyGrant(key); }
+// A session exists once it has a Codex binding, a turn running/queued, or local history. Grants alone do not create it.
+function sessionExists(key) { return !!sessions[key] || live.has(key) || fs.existsSync(path.join(historyDir, `${safeKey(key)}.jsonl`)); }
 function visibleKeys(principal) { return principal.admin ? null : new Set(users.grants(principal.user.id)); }
-// Ungranted sessions are reported as missing so their existence does not leak.
+// Only admins (and WEBHOOK_TOKEN) create sessions. For normal users a key that is ungranted or does not
+// exist yet is reported as missing (404), so they can neither create sessions nor probe for them.
+function userCanUse(principal, key) { return principal.admin || (users.isGranted(principal.user.id, key) && sessionExists(key)); }
 function authorizeSend(principal, body) {
   if (principal.admin) return;
+  if (!userCanUse(principal, body.session)) throw failure('会话不存在', 404);
   if (body.codex_session_id !== undefined) throw failure('仅管理员可以绑定 Codex ID', 403);
-  if (users.isGranted(principal.user.id, body.session)) return;
-  if (sessionKnown(body.session)) throw failure('Session not found', 404);
-  if (!principal.user.can_create) throw failure('无权新建会话', 403);
-  users.grant(principal.user.id, body.session);
 }
 function fileVisible(principal, rawPath) {
   if (principal.admin) return true;
@@ -444,8 +442,8 @@ function readJson(req, limit = 65536) {
   });
 }
 function principalInfo(principal) {
-  return { ok: true, auth: principal.kind, role: principal.admin ? 'admin' : 'user', can_create: canCreate(principal),
-    user: principal.user ? { id: principal.user.id, username: principal.user.username, role: principal.user.role, can_create: principal.user.can_create, last_login_at: principal.user.last_login_at } : null,
+  return { ok: true, auth: principal.kind, role: principal.admin ? 'admin' : 'user',
+    user: principal.user ? { id: principal.user.id, username: principal.user.username, role: principal.user.role, last_login_at: principal.user.last_login_at } : null,
     needs_setup: !users.hasAdmin() };
 }
 async function handleUsers(req, res, route, principal) {
@@ -454,7 +452,7 @@ async function handleUsers(req, res, route, principal) {
     if (req.method === 'GET') { send(res, 200, { users: users.list() }); return; }
     if (req.method === 'POST') {
       const input = await readJson(req);
-      send(res, 201, { user: await users.create({ username: input.username, password: input.password, role: input.role || 'user', can_create: !!input.can_create, disabled: !!input.disabled, sessions: input.sessions || [] }) }); return;
+      send(res, 201, { user: await users.create({ username: input.username, password: input.password, role: input.role || 'user', disabled: !!input.disabled, sessions: input.sessions || [] }) }); return;
     }
   }
   const match = route.match(/^\/api\/users\/(\d{1,12})(\/sessions|\/password)?$/);
@@ -465,7 +463,7 @@ async function handleUsers(req, res, route, principal) {
     if (req.method === 'PATCH') {
       const input = await readJson(req);
       if (self && ((input.role !== undefined && input.role !== 'admin') || input.disabled === true)) throw failure('不能降级或停用自己', 409);
-      const user = users.update(id, { username: input.username, role: input.role, disabled: input.disabled, can_create: input.can_create });
+      const user = users.update(id, { username: input.username, role: input.role, disabled: input.disabled });
       if (Array.isArray(input.sessions)) user.sessions = users.setGrants(id, input.sessions);
       send(res, 200, { user }); return;
     }
@@ -609,10 +607,10 @@ const server = http.createServer(async (req, res) => {
         } catch { throw failure('Invalid session', 400); }
         if (!validKey(key)) throw failure('Invalid session', 400);
         const file = path.join(historyDir, `${safeKey(key)}.jsonl`);
-        if (!canSee(principal, key)) throw failure('Session not found', 404);
+        if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
         if (req.method === 'GET' && match[2]) { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550))); return; }
         if (req.method === 'DELETE' && !match[2]) {
-          if (!canCreate(principal)) throw failure('无权删除会话', 403);
+          if (!principal.admin) throw failure('仅管理员可以删除会话', 403);
           if (live.has(key)) throw failure('Session is running or queued', 409);
           if (!sessions[key] && !fs.existsSync(file)) throw failure('Session not found', 404);
           delete sessions[key]; persist(); users.forgetSession(key);

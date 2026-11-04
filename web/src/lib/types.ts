@@ -32,5 +32,5 @@ export interface Stats { today: { calls: number; failures: number; avg_duration_
 export interface RequestRow { time: string; request_id: string; session: string | null; source: string; method: string; path: string; status: number | string; ok: boolean; duration_ms: number; error: string | null }
 export interface DraftFile { id: number; file: File; name: string; size: number; mime: string; kind: 'image' | 'file'; preview: string | null }
 export interface PendingSend { message: string; attachments: DraftFile[]; started: number }
-export interface User { id: number; username: string; role: 'admin' | 'user'; disabled: boolean; can_create: boolean; created_at: string; updated_at: string; last_login_at: string | null; sessions: string[] }
-export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; can_create: boolean; needs_setup: boolean; user: { id: number; username: string; role: 'admin' | 'user'; can_create: boolean; last_login_at: string | null } | null }
+export interface User { id: number; username: string; role: 'admin' | 'user'; disabled: boolean; created_at: string; updated_at: string; last_login_at: string | null; sessions: string[] }
+export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }

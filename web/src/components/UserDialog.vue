@@ -7,14 +7,14 @@ import Icon from './Icon.vue'
 
 const dialog = ref<HTMLDialogElement>(), nameInput = ref<HTMLInputElement>()
 const editing = ref<User | null>(null)
-const username = ref(''), password = ref(''), role = ref<'admin' | 'user'>('user'), canCreate = ref(false), disabled = ref(false)
+const username = ref(''), password = ref(''), role = ref<'admin' | 'user'>('user'), disabled = ref(false)
 const granted = ref(new Set<string>()), query = ref(''), busy = ref(false), error = ref('')
 const isSelf = computed(() => !!editing.value && editing.value.id === state.me?.user?.id)
 
 function open(user: User | null) {
   editing.value = user
   username.value = user?.username || ''; password.value = ''
-  role.value = user?.role || 'user'; canCreate.value = !!user?.can_create; disabled.value = !!user?.disabled
+  role.value = user?.role || 'user'; disabled.value = !!user?.disabled
   granted.value = new Set(user?.sessions || []); query.value = ''; error.value = ''
   dialog.value?.showModal()
   void nextTick(() => nameInput.value?.focus())
@@ -40,10 +40,10 @@ async function save() {
   const sessions = [...granted.value]
   try {
     if (editing.value) {
-      await updateUser(editing.value.id, { username: username.value.trim(), role: role.value, can_create: canCreate.value, disabled: disabled.value, sessions })
+      await updateUser(editing.value.id, { username: username.value.trim(), role: role.value, disabled: disabled.value, sessions })
       toast('已保存', true)
     } else {
-      await createUser({ username: username.value.trim(), password: password.value, role: role.value, can_create: canCreate.value, sessions })
+      await createUser({ username: username.value.trim(), password: password.value, role: role.value, sessions })
       toast(`已创建用户 ${username.value.trim()}`, true)
     }
     dialog.value?.close()
@@ -74,8 +74,7 @@ const valid = computed(() => /^[\p{L}\p{N}_.@-]{2,32}$/u.test(username.value.tri
         <button type="button" role="radio" :aria-checked="role === 'user'" :class="{ on: role === 'user' }" :disabled="isSelf" @click="role = 'user'">普通用户</button>
         <button type="button" role="radio" :aria-checked="role === 'admin'" :class="{ on: role === 'admin' }" @click="role = 'admin'">管理员</button>
       </div>
-      <div class="user-flags">
-        <label class="check"><input v-model="canCreate" type="checkbox" :disabled="role === 'admin'"><span>允许新建和删除会话 <span class="muted">（新建的会话自动授权给该用户）</span></span></label>
+      <div v-if="editing" class="user-flags">
         <label v-if="editing" class="check"><input v-model="disabled" type="checkbox" :disabled="isSelf"><span>停用账号 <span class="muted">（立即退出所有设备）</span></span></label>
       </div>
 
@@ -83,7 +82,7 @@ const valid = computed(() => /^[\p{L}\p{N}_.@-]{2,32}$/u.test(username.value.tri
         <label class="field-label">可见会话</label>
         <span class="grant-count mono">{{ role === 'admin' ? '全部' : `${granted.size} / ${rows.length}` }}</span>
       </div>
-      <div v-if="role === 'admin'" class="grant-admin"><Icon name="shield" :size="14" />管理员可以查看和操作全部会话，无需单独授权。</div>
+      <div v-if="role === 'admin'" class="grant-admin"><Icon name="shield" :size="14" />管理员可以查看、新建和删除全部会话，无需单独授权。</div>
       <div v-else class="grant-box">
         <div class="grant-tools">
           <label class="search">

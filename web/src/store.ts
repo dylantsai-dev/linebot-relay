@@ -101,7 +101,8 @@ export async function loginPassword(username: string, password: string, remember
   await login(data.token, remember)
 }
 export const isAdmin = computed(() => state.me?.role === 'admin')
-export const canCreate = computed(() => !!state.me?.can_create)
+// Only admins (and the access token) can create or delete sessions.
+export const canCreate = computed(() => state.me?.role === 'admin')
 export const rememberChoice = () => !!storageGet(localStorage, TOKEN_KEY)
 
 /** Server-side logout revokes a user token; the webhook token cannot be revoked. */
@@ -326,7 +327,7 @@ export async function refreshUsers() {
   } catch (error) { if (own === epoch) users.error = (error as Error).message }
   finally { users.loading = false }
 }
-export interface UserInput { username?: string; password?: string; role?: 'admin' | 'user'; can_create?: boolean; disabled?: boolean; sessions?: string[] }
+export interface UserInput { username?: string; password?: string; role?: 'admin' | 'user'; disabled?: boolean; sessions?: string[] }
 export async function createUser(input: UserInput) {
   const data = await api<{ user: User }>('/api/users', { method: 'POST', body: JSON.stringify(input) })
   await refreshUsers(); return data.user

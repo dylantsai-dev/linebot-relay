@@ -128,9 +128,10 @@ app-server 可用時，歷史來自 `thread/read {threadId, includeTurns:true}`�
 
 | 角色 | 權限 |
 | --- | --- |
-| 管理員 `admin` | 所有會話、日誌、統計；管理使用者；可取得 `WEBHOOK_TOKEN`（複製「curl（含 Token）」） |
-| 普通使用者 `user` | 只看得到被授權的會話：列表、歷史、傳送／附件、日誌、統計、`/api/files` 全部依授權過濾；未授權的會話一律回 **404**（不洩漏是否存在）。不能綁定 Codex ID，也拿不到 `WEBHOOK_TOKEN` |
-| `can_create` 旗標 | 普通使用者可新建（傳送到新 key）與刪除會話；自己建立的會話自動授權給自己 |
+| 管理員 `admin` | 所有會話、日誌、統計；**唯一可以新建與刪除會話的角色**（傳送到新 key 即自動建立，與 `WEBHOOK_TOKEN` 相同）；管理使用者；可取得 `WEBHOOK_TOKEN`（複製「curl（含 Token）」） |
+| 普通使用者 `user` | 只看得到被授權的會話：列表、歷史、傳送／附件、日誌、統計、`/api/files` 全部依授權過濾；未授權的會話一律回 **404**（不洩漏是否存在）。不能新建或刪除會話：對不存在或未授權的 key 傳送（`/api/send`、`/webhook`、附件上傳、`callback_url` 非同步呼叫）或讀取歷史一律回 404「会话不存在」，絕不會隱式建立會話——即使管理員已預先授權該 key，也要等管理員先建立（送出第一則訊息）後才能使用。不能綁定 Codex ID，也拿不到 `WEBHOOK_TOKEN` |
+
+典型流程：管理員在「会话」新建會話並送出第一則訊息 → 到「用户」編輯使用者，在會話清單勾選授權。
 
 `WEBHOOK_TOKEN` 永遠擁有完整權限：既有的 Webhook 整合不受影響，也可用來登入控制台救回管理員。
 
@@ -145,7 +146,7 @@ app-server 可用時，歷史來自 `thread/read {threadId, includeTurns:true}`�
 
 已登入：`GET /api/whoami`、`POST /api/auth/logout`、`POST /api/auth/password {current_password,new_password}`（會登出其他裝置）、`POST /api/auth/setup {username,password}`（僅 `WEBHOOK_TOKEN` 且尚無管理員時）、`GET /api/webhook-token`（僅管理員）。
 
-管理員：`GET/POST /api/users`、`GET/PATCH/DELETE /api/users/:id`、`PUT /api/users/:id/sessions {sessions:[...]}`（整批覆寫授權）、`POST /api/users/:id/password {password}`。`POST`／`PATCH` 欄位：`username`、`password`、`role`、`can_create`、`disabled`、`sessions`。停用或重設密碼會撤銷該使用者的所有 Token；系統至少保留一個啟用中的管理員，管理員不能降級、停用或刪除自己。
+管理員：`GET/POST /api/users`、`GET/PATCH/DELETE /api/users/:id`、`PUT /api/users/:id/sessions {sessions:[...]}`（整批覆寫授權）、`POST /api/users/:id/password {password}`。`POST`／`PATCH` 欄位：`username`、`password`、`role`、`disabled`、`sessions`（舊版的 `can_create` 欄位已移除，傳入會被忽略；舊資料庫啟動時自動移除該欄）。停用或重設密碼會撤銷該使用者的所有 Token；系統至少保留一個啟用中的管理員，管理員不能降級、停用或刪除自己。
 
 | 變數 | 說明 |
 | --- | --- |
