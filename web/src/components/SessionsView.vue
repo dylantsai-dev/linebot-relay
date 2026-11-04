@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { state, keyPattern, createSession, deleteSession, toast, isAdmin, listCodexThreads, linkSession } from '../store'
+import { state, keyPattern, deleteSession, toast, isAdmin, listCodexThreads, linkSession } from '../store'
 import type { CodexThread } from '../lib/types'
 import { time } from '../lib/format'
 import SessionList from './SessionList.vue'
@@ -9,8 +9,7 @@ import Icon from './Icon.vue'
 
 const newDialog = ref<HTMLDialogElement>(), deleteDialog = ref<HTMLDialogElement>(), keyInput = ref<HTMLInputElement>()
 const newKey = ref(''), newId = ref(''), deleting = ref(false), toDelete = ref('')
-// The sidebar links existing Codex sessions: "link" is the primary path; "blank" starts a new thread on first send.
-const mode = ref<'link' | 'blank'>('link')
+// The console never creates Codex threads: the admin can only link an existing thread.
 const idPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 const threads = ref<CodexThread[]>([]), nextCursor = ref<string | null>(null), loadingThreads = ref(false), threadsError = ref('')
 const query = ref(''), linkError = ref(''), linking = ref(false)
@@ -23,7 +22,7 @@ const relative = (iso: string | null) => {
 }
 const shortCwd = (cwd: string | null) => (cwd ? cwd.replace(/^\/root(?=\/|$)/, '~') : '')
 const selectedThread = computed(() => threads.value.find(t => t.id === newId.value))
-const canSubmit = computed(() => keyPattern.test(newKey.value) && (mode.value === 'blank' || !isAdmin.value || idPattern.test(newId.value)) && !linking.value)
+const canSubmit = computed(() => isAdmin.value && keyPattern.test(newKey.value) && idPattern.test(newId.value) && !linking.value)
 
 async function loadThreads(more = false) {
   const seq = ++searchSeq
@@ -52,13 +51,12 @@ function suggestKey(thread: CodexThread) {
 }
 function openNew() {
   newKey.value = ''; autoKey = ''; newId.value = ''; query.value = ''; linkError.value = ''
-  mode.value = isAdmin.value ? 'link' : 'blank'
+  if (!isAdmin.value) return
   newDialog.value?.showModal(); setTimeout(() => keyInput.value?.focus())
-  if (isAdmin.value) void loadThreads()
+  void loadThreads()
 }
 async function create() {
   if (!canSubmit.value) return
-  if (mode.value === 'blank' || !isAdmin.value) { newDialog.value?.close(); createSession(newKey.value, null); return }
   linking.value = true; linkError.value = ''
   try {
     await linkSession(newKey.value, newId.value)
@@ -83,13 +81,9 @@ async function confirmDelete() {
 
     <dialog ref="newDialog" class="dialog new-dialog" @click.self="newDialog?.close()">
       <form @submit.prevent="create">
-        <h2>新建会话</h2>
-        <div v-if="isAdmin" class="seg" role="tablist">
-          <button type="button" role="tab" :aria-selected="mode === 'link'" :class="{ on: mode === 'link' }" @click="mode = 'link'"><Icon name="link" :size="13" />关联已有 Codex 会话</button>
-          <button type="button" role="tab" :aria-selected="mode === 'blank'" :class="{ on: mode === 'blank' }" @click="mode = 'blank'"><Icon name="plus" :size="13" />新建空白会话</button>
-        </div>
+        <h2>关联 Codex 会话</h2>
 
-        <template v-if="isAdmin && mode === 'link'">
+        <template v-if="isAdmin">
           <div class="picker-search">
             <Icon name="search" :size="13" />
             <input v-model="query" class="input" placeholder="搜索 Codex 会话（标题 / 内容）" autocomplete="off" @input="onSearch">
@@ -117,15 +111,13 @@ async function confirmDelete() {
           <input id="new-id" v-model.trim="newId" class="input mono" autocomplete="off" placeholder="从上面选择，或粘贴会话 ID（UUID）" @input="linkError = ''">
           <small class="field-hint" :class="{ error: (newId && !idPattern.test(newId)) || linkError }">{{ linkError || (newId && !idPattern.test(newId) ? 'Codex 会话 ID 应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079' : selectedThread ? `将关联：${selectedThread.title}` : '服务端会校验该会话在 Codex 中确实存在。') }}</small>
         </template>
-        <small v-else-if="isAdmin" class="field-hint blank-hint">新建空白 Codex 会话：发送首条消息时才会在 Codex 中创建新线程。</small>
 
         <label class="field-label" for="new-key">会话 key</label>
         <input id="new-key" ref="keyInput" v-model.trim="newKey" class="input mono" maxlength="128" autocomplete="off" placeholder="例如 line:U123">
         <small class="field-hint" :class="{ error: newKey && !keyPattern.test(newKey) }">1–128 个字符，仅限 A–Z a–z 0–9 _ . : -</small>
-        <small v-if="!isAdmin" class="field-hint">发送第一条消息后创建，并自动授权给你。</small>
         <div class="dialog-actions">
           <button type="button" class="btn" @click="newDialog?.close()">取消</button>
-          <button class="btn primary" :disabled="!canSubmit">{{ linking ? '校验中…' : isAdmin && mode === 'link' ? '关联' : '创建' }}</button>
+          <button class="btn primary" :disabled="!canSubmit">{{ linking ? '校验中…' : '关联' }}</button>
         </div>
       </form>
     </dialog>

@@ -8,6 +8,7 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { newThread } = require('./link-helper');
 const root = path.resolve(__dirname, '..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-users-'));
 const token = crypto.randomBytes(24).toString('hex');
@@ -36,7 +37,17 @@ async function boot(name, extra = {}) {
     try { if ((await fetch(`${base}/health`)).ok) break; } catch {}
     await pause(25);
   }
-  const call = async (auth, route, { method = 'GET', body, form } = {}) => {
+  const linked = new Map();
+  const call = async (auth, route, opts = {}) => {
+    const b = opts.body;
+    if (opts.method === 'POST' && (route === '/webhook' || route === '/api/send') && b && typeof b.session === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(b.session) && b.codex_session_id === undefined && !opts.noLink && (auth === token || adminTokens.has(auth))) {
+      if (!linked.has(b.session)) linked.set(b.session, (fs.existsSync(path.join(dir, 'data', 'sessions.json')) && JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))[b.session]) ? null
+        : raw(token, `/api/sessions/${encodeURIComponent(b.session)}`, { method: 'PUT', body: { codex_session_id: newThread(path.join(dir, 'codex-home')) } }));
+      await linked.get(b.session);
+    }
+    return raw(auth, route, opts);
+  };
+  const raw = async (auth, route, { method = 'GET', body, form } = {}) => {
     const headers = auth ? { Authorization: `Bearer ${auth}` } : {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const response = await fetch(base + route, { method, headers, body: form || (body === undefined ? undefined : JSON.stringify(body)) });
@@ -46,6 +57,7 @@ async function boot(name, extra = {}) {
   return { base, call, dir };
 }
 const enc = encodeURIComponent;
+const adminTokens = new Set();
 
 async function main() {
   // ---- bootstrap without seed: WEBHOOK_TOKEN logs in and creates the first admin ----
@@ -72,6 +84,7 @@ async function main() {
   const adminLogin = await call(null, '/api/auth/login', { method: 'POST', body: { username: 'ADMIN', password: 'admin-pass-1' } });
   assert.equal(adminLogin.status, 200, 'usernames are case-insensitive');
   const admin = adminLogin.body.token;
+  adminTokens.add(admin);
   assert.equal(adminLogin.body.user.role, 'admin');
   assert.ok(Date.parse(adminLogin.body.expires_at) - Date.now() > 29 * 24 * 3600 * 1000);
   const adminId = adminLogin.body.user.id;
@@ -83,6 +96,14 @@ async function main() {
     assert.equal(reply.status, 200); assert.match(reply.body.reply, /^echo:hello/);
   }
   assert.equal((await call(token, '/sessions')).status, 200);
+  // Unknown/unlinked sessions are rejected and no Codex thread is created, for every caller.
+  const before = fs.existsSync(path.join(dir, 'codex-home', 'sessions')) ? fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length : 0;
+  for (const route of ['/webhook', '/api/send']) {
+    const unknown = await call(token, route, { method: 'POST', body: { session: 'never-linked', message: 'hi' }, noLink: true });
+    assert.equal(unknown.status, 404, route); assert.match(unknown.body.error, /不会新建 Codex 会话/);
+  }
+  assert.equal(fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length, before, 'no thread was started');
+  assert.ok(!JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))['never-linked']);
 
   // Admin CRUD.
   assert.equal((await call(admin, '/api/users', { method: 'POST', body: { username: 'bad name!', password: 'password-1' } })).status, 400);

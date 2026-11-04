@@ -70,7 +70,24 @@ function loadRelay() {
   relayContext = context;
 }
 
-function post(session, message, codex_session_id, extra = {}) {
+function persistedKeys() { try { return JSON.parse(fs.readFileSync(path.join(temp, 'data/sessions.json'), 'utf8')); } catch { return {}; } }
+// The relay never starts threads: like the admin would, link a thread that already exists in Codex.
+const linkedKeys = new Map();
+let seq = 0;
+async function post(session, message, codex_session_id, extra = {}) {
+  const key = Buffer.isBuffer(extra) ? /name="session"\r\n\r\n([^\r]+)\r\n/.exec(extra.toString('latin1'))?.[1] : session;
+  if (!codex_session_id && typeof key === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(key) && !extra.__noLink && !persistedKeys()[key]) {
+    if (!linkedKeys.has(key)) {
+      let id;
+      fake.handle({ id: `pre-${++seq}`, method: 'thread/start', params: {} }, value => { if (value.result?.thread) id = value.result.thread.id; }, () => {});
+      linkedKeys.set(key, api('PUT', `/api/sessions/${encodeURIComponent(key)}`, { codex_session_id: id }));
+    }
+    await linkedKeys.get(key);
+  }
+  if (extra && extra.__noLink) { extra = { ...extra }; delete extra.__noLink; }
+  return rawPost(session, message, codex_session_id, extra);
+}
+function rawPost(session, message, codex_session_id, extra = {}) {
   return new Promise((resolve, reject) => {
     const req = new EventEmitter();
     Object.assign(req, { url: '/webhook', method: 'POST', headers: { authorization: 'Bearer test-token', ...(Buffer.isBuffer(extra) ? {'content-type':'multipart/form-data; boundary=app-upload'} : {}) } });
@@ -146,7 +163,7 @@ async function main() {
   assert.equal(first.body.reply, 'reply:hello');
   assert.equal(first.body.transport, 'app-server');
   const threadId = first.body.codex_session_id;
-  assert.ok(fs.statSync(path.join(temp, 'work/one')).isDirectory());
+  assert.ok(!fake.requests.some(r => r.method === 'thread/start' && r.params.serviceName), 'relay never starts a Codex thread');
   assert.equal(client.connected, true);
   await assert.rejects(client.request('test/hang', {}, 10), /request timed out/);
   assert.equal(client.pending.size, 0);
@@ -154,7 +171,7 @@ async function main() {
   assert.equal(second.body.codex_session_id, threadId);
   assert.deepEqual(fake.threads.get(threadId), ['hello', 'again']);
   assert.equal(fake.requests.filter(r => r.method === 'initialize').length, 1);
-  assert.equal(fake.requests.filter(r => r.method === 'thread/resume' && r.params.threadId === threadId).length, 0);
+  assert.equal(fake.requests.filter(r => r.method === 'thread/resume' && r.params.threadId === threadId).length, 1, 'linking subscribes once; sends reuse it');
   // A second connection owns a loaded thread; the relay must still resume it.
   const OtherClient = appServerClass();
   const app = new OtherClient(socketPath);
@@ -201,11 +218,11 @@ async function main() {
   assert.equal(init.params.clientInfo.name, 'linebot-relay');
   assert.equal(init.params.capabilities.experimentalApi, true);
   assert.equal(init.params.capabilities.requestAttestation, false);
-  const start = fake.requests.find(r => r.method === 'thread/start' && r.params.serviceName).params;
-  assert.equal(start.model, 'test-model');
-  assert.equal(start.sandbox, 'workspace-write');
-  assert.equal(start.approvalPolicy, 'never');
-  assert.equal(start.serviceName, 'linebot-relay');
+  assert.ok(!fake.requests.some(r => r.method === 'thread/start' && r.params.serviceName), 'relay never starts a Codex thread');
+  const threadStartsBefore = fake.requests.filter(r => r.method === 'thread/start').length;
+  const unlinked = await post('never-linked', 'hi', undefined, { __noLink: true });
+  assert.equal(unlinked.status, 404); assert.match(unlinked.body.error, /不会新建 Codex 会话/);
+  assert.equal(fake.requests.filter(r => r.method === 'thread/start').length, threadStartsBefore);
   assert.ok(fake.requests.every(r => !('jsonrpc' in r)));
   client.subscribed.delete(threadId);
   fake.loaded.delete(threadId);
@@ -336,7 +353,7 @@ async function main() {
   // A rejected initialize handshake also falls back before turn submission.
   client.close();
   fake.rejectInitialize = true;
-  assert.equal((await post('handshake-failure', 'test')).body.error, 'EXEC_FALLBACK');
+  assert.equal((await post('one', 'handshake-failure')).body.error, 'EXEC_FALLBACK');
   assert.equal(spawnCount, 1);
   fake.rejectInitialize = false;
   await pause(50);
@@ -454,13 +471,13 @@ async function main() {
   await fake.close();
   if (!fs.existsSync(socketPath)) fs.writeFileSync(socketPath, 'stale socket');
   const before = fake.requests.filter(r => r.method === 'turn/start').length;
-  assert.equal((await post('connection-failure', 'test')).body.error, 'EXEC_FALLBACK');
-  assert.equal((await post('backoff', 'test')).body.error, 'EXEC_FALLBACK');
+  assert.equal((await post('one', 'connection-failure')).body.error, 'EXEC_FALLBACK');
+  assert.equal((await post('one', 'backoff')).body.error, 'EXEC_FALLBACK');
   assert.equal(spawnCount, 3);
   assert.equal(fake.requests.filter(r => r.method === 'turn/start').length, before);
   fs.unlinkSync(socketPath);
   assert.equal((await get('/api/sessions/external/history')).body.source, 'local');
-  assert.equal((await post('missing-socket', 'test')).body.error, 'EXEC_FALLBACK');
+  assert.equal((await post('one', 'missing-socket')).body.error, 'EXEC_FALLBACK');
   assert.equal(spawnCount, 4);
   console.log(`App-server relay tests passed (${socketMode ? 'unix WebSocket' : 'simulated WebSocket'})`);
 }

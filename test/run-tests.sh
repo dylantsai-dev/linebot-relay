@@ -18,6 +18,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const root = process.cwd();
+const { newThread } = require(path.join(root, 'test/link-helper.js'));
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'linebot-relay-'));
 const token = crypto.randomBytes(24).toString('hex');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -56,7 +57,16 @@ async function main() {
     }
     throw new Error('server startup timeout');
   }
+  const linkedKeys = new Map();
   async function request(route, options = {}) {
+    let parsed; try { parsed = typeof options.body === 'string' ? JSON.parse(options.body) : null; } catch {}
+    if (options.method === 'POST' && (route === '/webhook' || route === '/api/send') && !options.noLink && options.headers?.Authorization === undefined && parsed && typeof parsed.session === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(parsed.session) && parsed.codex_session_id === undefined) {
+      if (!linkedKeys.has(parsed.session)) linkedKeys.set(parsed.session, rawRequest(`/api/sessions/${/^\.+$/.test(parsed.session) ? parsed.session.replace(/\./g, '%252e') : encodeURIComponent(parsed.session)}`, { method: 'PUT', body: JSON.stringify({ codex_session_id: newThread(env.CODEX_HOME) }) }));
+      await linkedKeys.get(parsed.session);
+    }
+    return rawRequest(route, options);
+  }
+  async function rawRequest(route, options = {}) {
     const response = await fetch(base + route, { ...options, headers: { Authorization: `Bearer ${token}`, ...options.headers } });
     return { status: response.status, body: await response.json() };
   }

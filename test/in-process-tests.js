@@ -8,6 +8,7 @@ const os = require('node:os');
 const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { Writable } = require('node:stream');
+const { newThread } = require('./link-helper');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-in-process-'));
 const originalEnv = { ...process.env };
 const quote = value => "'" + value.replace(/'/g, "'\\''") + "'";
@@ -76,7 +77,21 @@ function load() {
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8'), context);
 }
-function request(url, body, auth = 'Bearer test-secret', method = body === undefined ? 'GET' : 'POST', contentType) {
+const linkedKeys = new Map();
+async function request(url, body, auth = 'Bearer test-secret', method = body === undefined ? 'GET' : 'POST', contentType) {
+  const multipartKey = Buffer.isBuffer(body) && /name="session"\r\n\r\n([^\r]+)\r\n/.exec(body.toString('latin1'))?.[1];
+  if (multipartKey && method === 'POST' && auth === 'Bearer test-secret' && !linkedKeys.has(multipartKey)) {
+    linkedKeys.set(multipartKey, rawRequest(`/api/sessions/${encodeURIComponent(multipartKey)}`, { codex_session_id: newThread(process.env.CODEX_HOME) }, auth, 'PUT'));
+    await linkedKeys.get(multipartKey);
+  }
+  if (method === 'POST' && (url === '/webhook' || url === '/api/send') && auth === 'Bearer test-secret' && body && !Buffer.isBuffer(body) && typeof body.session === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(body.session) && body.codex_session_id === undefined && !body.__noLink) {
+    if (!linkedKeys.has(body.session)) linkedKeys.set(body.session, rawRequest(`/api/sessions/${encodeURIComponent(body.session)}`, { codex_session_id: newThread(process.env.CODEX_HOME) }, auth, 'PUT'));
+    await linkedKeys.get(body.session);
+  }
+  if (body && body.__noLink) { body = { ...body }; delete body.__noLink; }
+  return rawRequest(url, body, auth, method, contentType);
+}
+function rawRequest(url, body, auth = 'Bearer test-secret', method = body === undefined ? 'GET' : 'POST', contentType) {
   return new Promise((resolve, reject) => {
     const req = new EventEmitter();
     Object.assign(req, { url, method, headers: { authorization: auth, ...(contentType ? { 'content-type': contentType } : {}) } });

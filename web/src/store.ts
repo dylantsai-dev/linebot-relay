@@ -208,11 +208,6 @@ export async function linkSession(key: string, codexId: string) {
   else await selectSession(key)
 }
 
-export function createSession(key: string, codexId: string | null) {
-  if (!state.sessions.some(s => s.key === key)) state.drafts.set(key, codexId)
-  void selectSession(key)
-}
-
 export async function deleteSession(key: string) {
   if (state.sessions.some(s => s.key === key) || state.pending.has(key)) await api(`/api/sessions/${keyPath(key)}`, { method: 'DELETE' })
   state.drafts.delete(key)

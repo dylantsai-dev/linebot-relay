@@ -374,21 +374,9 @@ async function runCodex(key, message, sessionId, input) {
   try {
     await appserver.connect();
     let threadId = sessionId;
-    if (threadId) {
-      await appserver.subscribe(threadId);
-    } else {
-      const workdir = path.join(config.work, safeKey(key));
-      fs.mkdirSync(workdir, { recursive: true });
-      const params = { cwd: workdir, sandbox: 'workspace-write', approvalPolicy: 'never', serviceName: 'linebot-relay' };
-      if (process.env.CODEX_MODEL) params.model = process.env.CODEX_MODEL;
-      const result = await appserver.request('thread/start', params);
-      threadId = result?.thread?.id;
-      if (typeof threadId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(threadId)) throw failure('Codex did not return a valid session id');
-      appserver.subscribed.add(threadId);
-      const now = new Date().toISOString();
-      sessions[key] = { codex_session_id: threadId, created_at: now, updated_at: now, messages: 0 };
-      persist();
-    }
+    // The relay never starts Codex threads; every session must point at an existing one.
+    if (!threadId) throw failure('该会话未关联 Codex 会话，控制台不能新建 Codex 会话', 403);
+    await appserver.subscribe(threadId);
     // Once sent, a lost response cannot prove the turn was not accepted.
     submitted = true;
     const reply = await appserver.runTurn(threadId, input || message, config.timeout);
@@ -401,6 +389,7 @@ async function runCodex(key, message, sessionId, input) {
 }
 
 function runCodexExec(key, message, sessionId) {
+  if (!sessionId) return Promise.reject(failure('该会话未关联 Codex 会话，控制台不能新建 Codex 会话', 403));
   return new Promise((resolve, reject) => {
     const workdir = path.join(config.work, safeKey(key));
     fs.mkdirSync(workdir, { recursive: true });
@@ -840,6 +829,8 @@ const server = http.createServer(async (req, res) => {
     authorizeSend(principal, body);
     // Linking must name a thread that exists in Codex; nothing is created otherwise.
     if (body.codex_session_id !== undefined && body.codex_session_id !== sessions[body.session]?.codex_session_id) await verifyThread(body.codex_session_id);
+    // Never create a Codex thread: unknown/unlinked sessions are rejected before anything is queued.
+    if (!(body.codex_session_id || sessions[body.session]?.codex_session_id)) throw failure('会话不存在或未关联 Codex 会话；控制台和 webhook 不会新建 Codex 会话，请让管理员关联已有会话', 404);
     if (!body.message?.trim()) body.message = '请查看附件。';
     const prepared = await prepareAttachments(body, parsed.files, config, safeKey);
     body.attachments = prepared.attachments;
