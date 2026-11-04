@@ -401,6 +401,39 @@ function validate(body) {
   }
 }
 
+// Console UI: the Vue build in web/dist (SPA, served under /console/) when present,
+// otherwise the legacy single-file console.html. /console/legacy always serves the legacy page.
+const consoleDist = path.resolve(process.env.CONSOLE_DIST || path.join(__dirname, 'web', 'dist'));
+const consoleCsp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
+const staticTypes = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json; charset=utf-8' };
+function consoleHtml(res, file) {
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': consoleCsp, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' });
+  res.end(fs.readFileSync(file, 'utf8'));
+}
+function serveConsole(req, res, route) {
+  const legacy = path.join(__dirname, 'console.html');
+  const index = path.join(consoleDist, 'index.html');
+  const useDist = process.env.CONSOLE_UI !== 'legacy' && fs.existsSync(index);
+  if (['/console/legacy', '/console/legacy/'].includes(route) || (!useDist && ['/console', '/console/'].includes(route))) { consoleHtml(res, legacy); return; }
+  if (!useDist) { send(res, 404, { error: 'Not found' }); return; }
+  let relative;
+  try { relative = decodeURIComponent(route.slice('/console/'.length)); } catch { send(res, 400, { error: 'Bad path' }); return; }
+  const target = path.resolve(consoleDist, relative);
+  const inside = relative && !relative.includes('\0') && target.startsWith(consoleDist + path.sep);
+  let stat = null;
+  if (inside) { try { stat = fs.statSync(target); } catch { /* fall through */ } }
+  if (stat?.isFile() && path.basename(target) !== 'index.html') {
+    const hashed = relative.startsWith('assets/');
+    res.writeHead(200, { 'Content-Type': staticTypes[path.extname(target).toLowerCase()] || 'application/octet-stream', 'Content-Length': stat.size, 'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+    if (req.method === 'HEAD') { res.end(); return; }
+    fs.createReadStream(target).on('error', () => res.destroy()).pipe(res);
+    return;
+  }
+  // Missing build assets are real 404s; any other path is a client-side route.
+  if (relative.startsWith('assets/') || /\.[a-z0-9]{1,8}$/i.test(relative)) { send(res, 404, { error: 'Not found' }); return; }
+  consoleHtml(res, index);
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now(), requestId = crypto.randomUUID();
   let body, route;
@@ -417,12 +450,7 @@ const server = http.createServer(async (req, res) => {
     // Preserve dot keys: URL.pathname normalizes literal and encoded dot segments.
     const rawPath = req.url.split('?')[0];
     route = rawPath.startsWith('/api/sessions/') ? rawPath : url.pathname;
-    if (req.method === 'GET' && ['/console', '/console/'].includes(route)) {
-      const html = fs.readFileSync(path.join(__dirname, 'console.html'), 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self'; frame-ancestors 'none'" });
-      res.end(html);
-      return;
-    }
+    if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console' || route.startsWith('/console/'))) { serveConsole(req, res, route); return; }
     if (req.method === 'GET' && route === '/health') { send(res, 200, { ok: true }); record(200); return; }
     if (!(req.method === 'GET' && route === '/sessions') && !(req.method === 'POST' && route === '/webhook') && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
     const supplied = crypto.createHash('sha256').update(req.headers.authorization || '').digest();

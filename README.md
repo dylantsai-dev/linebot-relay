@@ -64,7 +64,31 @@ Relay 不回答任何 app-server 主動要求（包括審批與使用者輸入�
 
 ## Web 控制台
 
-開啟 `https://linebot.dylantsai.com/console`（本機為 `http://127.0.0.1:8790/console`）。`/console/` 亦可使用，`/` 維持 404。部署時必須將 `console.html` 與 `server.js` 放在同一目錄。頁面無外部字型、CDN 或 npm 套件，提供中文介面、深淺主題及手機版會話清單。
+開啟 `https://linebot.dylantsai.com/console`（本機為 `http://127.0.0.1:8790/console`）。`/console/` 亦可使用，`/` 維持 404。
+
+控制台有兩個版本：
+
+- **Vue 版（`web/`）**：Vue 3 + Vite + TypeScript，僅依賴 `marked`、`DOMPurify` 與自帶的 Inter 字型，無 UI 套件。若 `web/dist/index.html` 存在，`server.js` 會在 `/console` 提供它（`/console/*` 以 SPA 方式回退至 `index.html`，`/console/assets/*` 帶長效快取，HTML 仍為 `no-store` 與相同 CSP）。
+- **舊版（`console.html`）**：單檔頁面，無外部資源。沒有 build、或設定 `CONSOLE_UI=legacy` 時於 `/console` 提供；任何情況下都可從 `/console/legacy` 開啟。
+
+`CONSOLE_DIST` 可改變 build 目錄（預設 `web/dist`）。部署時須將 `console.html`、`server.js` 與（若使用 Vue 版）`web/dist/` 一起放上伺服器。
+
+### 本機開發 Vue 控制台
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173/console/
+```
+
+開發伺服器將 `/api`、`/webhook`、`/health`、`/sessions` 代理到 `https://linebot.dylantsai.com`；改用本機後端：`RELAY_BACKEND=http://127.0.0.1:8790 npm run dev`。`web/.env.development` 的 `VITE_PUBLIC_ORIGIN` 決定複製出的 Webhook URL／curl 使用的網域（預設線上網域而非 localhost）。
+
+```bash
+npm run typecheck  # vue-tsc
+npm run build      # 輸出 web/dist，server.js 會自動在 /console 提供
+```
+
+`web/dist/` 與 `web/node_modules/` 不納入版本控制。
 
 使用相同的 `WEBHOOK_TOKEN` 登入，透過 `/api/whoami` 驗證。未勾選「记住我」時 Token 存於 sessionStorage；勾選時存於 localStorage，登出會清除兩者。HTML 本身不含 Token，回應帶有 `Cache-Control: no-store` 及限制同源連線、禁止嵌入的 CSP。
 

@@ -15,7 +15,7 @@ const wrapper = path.join(temp, 'codex');
 fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.join(__dirname, 'fake-codex.js'))} "$@"\n`, { mode: 0o755 });
 Object.assign(process.env, {
   CODEX_APP_SERVER_SOCK: path.join(temp, 'missing.sock'), WEBHOOK_TOKEN: 'test-secret', DATA_DIR: path.join(temp, 'data'), WORK_DIR: path.join(temp, 'work'),
-  UPLOAD_DIR: path.join(temp, 'uploads'), MAX_FILE_BYTES: '1024', MAX_FILES: '5',
+  UPLOAD_DIR: path.join(temp, 'uploads'), MAX_FILE_BYTES: '1024', MAX_FILES: '5', CONSOLE_UI: 'legacy',
   LOG_DIR: path.join(temp, 'logs'), CODEX_BIN: wrapper, CODEX_TIMEOUT_MS: '500',
   MAX_CONCURRENCY: '2', FAKE_CODEX_STATE: path.join(temp, 'state'), CODEX_MODEL: 'test-model', EXPECT_CODEX_MODEL: 'test-model',
 });

@@ -1,0 +1,60 @@
+<script setup lang="ts">
+import { computed, onMounted } from 'vue'
+import { logs, refreshLogs } from '../store'
+import { time, duration, uptime } from '../lib/format'
+import Icon from './Icon.vue'
+onMounted(() => { if (!logs.loaded) void refreshLogs() })
+const cards = computed(() => {
+  const s = logs.stats
+  if (!s) return []
+  const rate = s.today.calls ? Math.round(((s.today.calls - s.today.failures) / s.today.calls) * 100) : null
+  return [
+    { label: '今日调用', value: String(s.today.calls), sub: rate === null ? '—' : `成功率 ${rate}%` },
+    { label: '今日失败', value: String(s.today.failures), sub: s.today.failures ? '需要关注' : '无异常', warn: s.today.failures > 0 },
+    { label: '平均耗时', value: duration(s.today.avg_duration_ms), sub: '今日' },
+    { label: '会话', value: String(s.total_sessions), sub: '已绑定' },
+    { label: '运行 / 排队', value: `${s.running} / ${s.queued}`, sub: `已运行 ${uptime(s.uptime_s)}` },
+  ]
+})
+</script>
+<template>
+  <div class="page">
+    <div class="page-inner">
+      <div class="page-head">
+        <div><h1>日志</h1><p class="muted">最近 100 次 Webhook 与控制台调用，时间为台北时间。</p></div>
+      </div>
+      <div class="stats">
+        <template v-if="cards.length">
+          <div v-for="c in cards" :key="c.label" class="stat"><span class="stat-label">{{ c.label }}</span><strong :class="{ warn: c.warn }">{{ c.value }}</strong><span class="stat-sub">{{ c.sub }}</span></div>
+        </template>
+        <template v-else><div v-for="i in 5" :key="i" class="stat"><span class="sk w40" /><span class="sk w60 tall" /></div></template>
+      </div>
+      <div class="toolbar">
+        <h2>最近调用</h2>
+        <span class="spacer" />
+        <label class="check"><input v-model="logs.auto" type="checkbox"> 自动刷新</label>
+        <button class="btn ghost icon-only" :class="{ spinning: logs.loading }" title="刷新" aria-label="刷新" @click="refreshLogs"><Icon name="refresh" /></button>
+      </div>
+      <div v-if="logs.error" class="banner error"><Icon name="alert" :size="14" />{{ logs.error }}</div>
+      <div class="table-card">
+        <div class="table-scroll">
+          <table class="table">
+            <thead><tr><th>时间（台北）</th><th>会话</th><th>来源</th><th>耗时</th><th>结果</th><th>错误</th></tr></thead>
+            <tbody>
+              <tr v-for="row in logs.requests" :key="row.request_id">
+                <td class="mono">{{ time(row.time) }}</td>
+                <td class="mono">{{ row.session || '—' }}</td>
+                <td><span class="badge">{{ row.source || '—' }}</span></td>
+                <td class="mono dim">{{ duration(row.duration_ms) }}</td>
+                <td><span class="result"><span class="dot" :class="row.ok ? 'ok' : 'fail'" />{{ row.ok ? '成功' : `失败 ${row.status || ''}` }}</span></td>
+                <td :class="row.error ? 'err' : 'dim'">{{ row.error || '' }}</td>
+              </tr>
+              <tr v-if="logs.loaded && !logs.requests.length"><td colspan="6"><div class="state-box">还没有调用记录</div></td></tr>
+              <template v-if="!logs.loaded && !logs.error"><tr v-for="i in 6" :key="i"><td colspan="6"><span class="sk w90" /></td></tr></template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
