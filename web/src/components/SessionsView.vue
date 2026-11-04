@@ -39,14 +39,19 @@ async function loadThreads(more = false) {
 function onSearch() { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => void loadThreads(), 300) }
 function pick(thread: CodexThread) {
   newId.value = thread.id; linkError.value = ''
-  if (!newKey.value) newKey.value = suggestKey(thread)
+  if (!newKey.value || newKey.value === autoKey) newKey.value = autoKey = suggestKey(thread)
 }
+// Suggest a key from the thread's working directory name (e.g. work/<key>), else codex-<id tail>.
+// Titles are usually Chinese prose, so they make poor keys.
+let autoKey = ''
 function suggestKey(thread: CodexThread) {
-  const base = (thread.title || '').normalize('NFKD').replace(/[^A-Za-z0-9_.:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase()
-  return base && keyPattern.test(base) ? base : `codex-${thread.id.slice(-8)}`
+  const taken = new Set(state.sessions.map(s => s.key))
+  const base = (thread.cwd || '').split('/').filter(Boolean).pop() || ''
+  if (base && keyPattern.test(base) && !taken.has(base) && !/^(root|home|tmp|codex|work)$/i.test(base)) return base
+  return `codex-${thread.id.slice(-8)}`
 }
 function openNew() {
-  newKey.value = ''; newId.value = ''; query.value = ''; linkError.value = ''
+  newKey.value = ''; autoKey = ''; newId.value = ''; query.value = ''; linkError.value = ''
   mode.value = isAdmin.value ? 'link' : 'blank'
   newDialog.value?.showModal(); setTimeout(() => keyInput.value?.focus())
   if (isAdmin.value) void loadThreads()
