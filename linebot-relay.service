@@ -1,0 +1,16 @@
+[Unit]
+Description=Webhook relay to Codex CLI sessions
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/linebot-relay
+EnvironmentFile=/opt/linebot-relay/.env
+ExecStart=/usr/bin/node /opt/linebot-relay/server.js
+Restart=always
+RestartSec=3
+User=root
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
