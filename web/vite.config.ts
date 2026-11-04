@@ -27,7 +27,7 @@ function favicon(): Plugin {
 // The console is served by server.js at /console, so assets live under /console/.
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const target = env.RELAY_BACKEND || 'https://linebot.dylantsai.com'
+  const target = env.RELAY_BACKEND || 'http://127.0.0.1:8790'
   const proxy = Object.fromEntries(
     ['/api', '/webhook', '/health', '/sessions'].map(route => [route, { target, changeOrigin: true, secure: true }]),
   )
