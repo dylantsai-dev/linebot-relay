@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { state, keyPattern, deleteSession, toast, isAdmin, listCodexThreads, linkSession } from '../store'
 import type { CodexThread } from '../lib/types'
 import { time } from '../lib/format'
-import SessionList from './SessionList.vue'
 import ChatView from './ChatView.vue'
 import Icon from './Icon.vue'
 
@@ -55,6 +54,7 @@ function openNew() {
   newDialog.value?.showModal(); setTimeout(() => keyInput.value?.focus())
   void loadThreads()
 }
+watch(() => state.linkRequest, () => openNew())
 async function create() {
   if (!canSubmit.value) return
   linking.value = true; linkError.value = ''
@@ -75,24 +75,26 @@ async function confirmDelete() {
 </script>
 <template>
   <div class="workspace">
-    <Transition name="fade"><div v-if="state.drawer" class="backdrop only-mobile" @click="state.drawer = false" /></Transition>
-    <SessionList @create="openNew" />
     <ChatView @delete="openDelete" />
 
     <dialog ref="newDialog" class="dialog new-dialog" @click.self="newDialog?.close()">
       <form @submit.prevent="create">
-        <h2>关联 Codex 会话</h2>
+        <div class="dialog-head">
+          <h2><span class="title-icon"><Icon name="link" :size="16" /></span>关联 Codex 会话</h2>
+          <button type="button" class="btn ghost icon-only sm" aria-label="关闭" data-tip="关闭 (Esc)" @click="newDialog?.close()"><Icon name="x" :size="15" /></button>
+        </div>
+        <p class="muted dialog-sub">选择 Codex 里已有的对话，再给它起一个 key。外部系统通过 key 把消息投递进来。</p>
 
         <template v-if="isAdmin">
           <div class="picker-search">
             <Icon name="search" :size="13" />
             <input v-model="query" class="input" placeholder="搜索 Codex 会话（标题 / 内容）" autocomplete="off" @input="onSearch">
-            <button type="button" class="btn ghost icon-only sm" title="刷新" aria-label="刷新" @click="loadThreads()"><Icon name="refresh" :size="13" /></button>
+            <button type="button" class="btn ghost icon-only sm" data-tip="刷新列表" aria-label="刷新" @click="loadThreads()"><Icon name="refresh" :size="13" /></button>
           </div>
           <div class="picker" role="listbox" aria-label="Codex 会话">
             <div v-if="threadsError" class="picker-empty error">{{ threadsError }}</div>
             <div v-else-if="loadingThreads && !threads.length" class="picker-empty"><span class="spinner sm" /> 读取 Codex 会话…</div>
-            <div v-else-if="!threads.length" class="picker-empty">没有找到 Codex 会话</div>
+            <div v-else-if="!threads.length" class="picker-empty"><Icon name="inbox" :size="20" />没有找到 Codex 会话</div>
             <button v-for="t in threads" :key="t.id" type="button" role="option" class="thread-row" :aria-selected="newId === t.id" :class="{ on: newId === t.id }" @click="pick(t)" @dblclick="pick(t); create()">
               <span class="t-main">
                 <span class="t-title">{{ t.title }}</span>
@@ -100,9 +102,9 @@ async function confirmDelete() {
               </span>
               <span v-if="t.preview && t.preview !== t.title" class="t-preview">{{ t.preview }}</span>
               <span class="t-meta mono">
-                <span v-if="t.cwd" class="t-cwd" :title="t.cwd">{{ shortCwd(t.cwd) }}</span>
-                <span v-if="t.status === 'active'" class="t-badge run">运行中</span>
-                <span v-for="k in t.linked" :key="k" class="t-badge" :title="`已被会话 ${k} 关联`">↔ {{ k }}</span>
+                <span v-if="t.cwd" class="t-cwd" :title="t.cwd"><Icon name="terminal" :size="11" />{{ shortCwd(t.cwd) }}</span>
+                <span v-if="t.status === 'active'" class="t-badge run"><span class="dot running" />运行中</span>
+                <span v-for="k in t.linked" :key="k" class="t-badge" :title="`已被会话 ${k} 关联`"><Icon name="link" :size="10" />{{ k }}</span>
               </span>
             </button>
             <button v-if="nextCursor" type="button" class="btn sm picker-more" :disabled="loadingThreads" @click="loadThreads(true)">{{ loadingThreads ? '加载中…' : '加载更多' }}</button>
@@ -117,18 +119,21 @@ async function confirmDelete() {
         <small class="field-hint" :class="{ error: newKey && !keyPattern.test(newKey) }">1–128 个字符，仅限 A–Z a–z 0–9 _ . : -</small>
         <div class="dialog-actions">
           <button type="button" class="btn" @click="newDialog?.close()">取消</button>
-          <button class="btn primary" :disabled="!canSubmit">{{ linking ? '校验中…' : '关联' }}</button>
+          <button class="btn primary" :disabled="!canSubmit"><span v-if="linking" class="spinner sm inv" /><Icon v-else name="link" :size="14" />{{ linking ? '校验中…' : '关联会话' }}</button>
         </div>
       </form>
     </dialog>
 
     <dialog ref="deleteDialog" class="dialog" @click.self="deleteDialog?.close()">
-      <h2>删除会话</h2>
+      <div class="dialog-head">
+        <h2><span class="title-icon danger"><Icon name="trash" :size="16" /></span>删除会话</h2>
+        <button type="button" class="btn ghost icon-only sm" aria-label="关闭" data-tip="关闭 (Esc)" @click="deleteDialog?.close()"><Icon name="x" :size="15" /></button>
+      </div>
       <p class="mono del-key">{{ toDelete }}</p>
       <p class="muted">只删除会话映射和消息历史，Codex 文件和工作目录会保留。此操作无法撤销。</p>
       <div class="dialog-actions">
         <button class="btn" @click="deleteDialog?.close()">取消</button>
-        <button class="btn danger-solid" :disabled="deleting" @click="confirmDelete">{{ deleting ? '删除中…' : '删除' }}</button>
+        <button class="btn danger-solid" :disabled="deleting" @click="confirmDelete"><span v-if="deleting" class="spinner sm inv" />{{ deleting ? '删除中…' : '删除' }}</button>
       </div>
     </dialog>
   </div>

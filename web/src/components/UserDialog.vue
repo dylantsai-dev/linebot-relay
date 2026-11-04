@@ -56,8 +56,8 @@ const valid = computed(() => /^[\p{L}\p{N}_.@-]{2,32}$/u.test(username.value.tri
   <dialog ref="dialog" class="dialog wide" @click.self="dialog?.close()">
     <form class="user-form" @submit.prevent="save">
       <div class="dialog-head">
-        <h2>{{ editing ? `编辑用户` : '新建用户' }}</h2>
-        <button type="button" class="btn ghost icon-only sm" aria-label="关闭" @click="dialog?.close()"><Icon name="x" :size="14" /></button>
+        <h2><span class="title-icon"><Icon :name="editing ? 'user-cog' : 'user-plus'" :size="16" /></span>{{ editing ? `编辑用户 · ${editing.username}` : '新建用户' }}</h2>
+        <button type="button" class="btn ghost icon-only sm" aria-label="关闭" data-tip="关闭 (Esc)" @click="dialog?.close()"><Icon name="x" :size="15" /></button>
       </div>
       <div class="user-form-grid">
         <div>
@@ -71,8 +71,8 @@ const valid = computed(() => /^[\p{L}\p{N}_.@-]{2,32}$/u.test(username.value.tri
       </div>
       <label class="field-label">角色</label>
       <div class="segmented" role="radiogroup" aria-label="角色">
-        <button type="button" role="radio" :aria-checked="role === 'user'" :class="{ on: role === 'user' }" :disabled="isSelf" @click="role = 'user'">普通用户</button>
-        <button type="button" role="radio" :aria-checked="role === 'admin'" :class="{ on: role === 'admin' }" @click="role = 'admin'">管理员</button>
+        <button type="button" role="radio" :aria-checked="role === 'user'" :class="{ on: role === 'user' }" :disabled="isSelf" @click="role = 'user'"><Icon name="user" :size="14" />普通用户</button>
+        <button type="button" role="radio" :aria-checked="role === 'admin'" :class="{ on: role === 'admin' }" @click="role = 'admin'"><Icon name="shield" :size="14" />管理员</button>
       </div>
       <div v-if="editing" class="user-flags">
         <label v-if="editing" class="check"><input v-model="disabled" type="checkbox" :disabled="isSelf"><span>停用账号 <span class="muted">（立即退出所有设备）</span></span></label>
@@ -106,7 +106,7 @@ const valid = computed(() => /^[\p{L}\p{N}_.@-]{2,32}$/u.test(username.value.tri
       <p class="login-error" role="alert">{{ error }}</p>
       <div class="dialog-actions">
         <button type="button" class="btn" @click="dialog?.close()">取消</button>
-        <button class="btn primary" :disabled="busy || !valid">{{ busy ? '保存中…' : editing ? '保存' : '创建' }}</button>
+        <button class="btn primary" :disabled="busy || !valid"><span v-if="busy" class="spinner sm inv" />{{ busy ? '保存中…' : editing ? '保存' : '创建用户' }}</button>
       </div>
     </form>
   </dialog>

@@ -37,8 +37,8 @@ async function toggleDisabled(u: User) {
   <div class="page">
     <div class="page-inner">
       <div class="page-head row">
-        <div><h1>用户</h1><p class="muted">管理员可以访问全部会话；普通用户只能看到被授权的会话。</p></div>
-        <button class="btn primary" @click="editor?.open(null)"><Icon name="plus" :size="13" />新建用户</button>
+        <div><h1><span class="title-icon"><Icon name="users" :size="18" /></span>用户</h1><p class="muted">管理员可以访问全部会话；普通用户只能看到被授权的会话。</p></div>
+        <button class="btn primary" @click="editor?.open(null)"><Icon name="user-plus" :size="15" />新建用户</button>
       </div>
       <div class="toolbar">
         <label class="search users-search">
@@ -47,7 +47,7 @@ async function toggleDisabled(u: User) {
         </label>
         <span class="muted users-count">{{ users.list.length }} 个用户</span>
         <span class="spacer" />
-        <button class="btn ghost icon-only sm" :class="{ spinning: users.loading }" title="刷新" aria-label="刷新" @click="refreshUsers"><Icon name="refresh" :size="14" /></button>
+        <button class="btn ghost icon-only sm" :class="{ spinning: users.loading }" data-tip="刷新" aria-label="刷新" @click="refreshUsers"><Icon name="refresh" :size="14" /></button>
       </div>
       <div v-if="users.error" class="banner error"><Icon name="alert" :size="14" />{{ users.error }}</div>
       <div class="table-card">
@@ -62,7 +62,7 @@ async function toggleDisabled(u: User) {
             <span class="user-avatar">{{ u.username.slice(0, 1).toUpperCase() }}</span>
             <span class="u-text"><b>{{ u.username }}</b><small v-if="self(u)" class="badge">你</small><small v-if="u.disabled" class="badge off-badge">已停用</small></span>
           </span>
-          <span class="u-cell" data-label="角色"><span class="badge" :class="{ app: u.role === 'admin' }">{{ u.role === 'admin' ? '管理员' : '普通用户' }}</span></span>
+          <span class="u-cell" data-label="角色"><span class="badge" :class="{ app: u.role === 'admin' }"><Icon :name="u.role === 'admin' ? 'shield' : 'user'" :size="11" />{{ u.role === 'admin' ? '管理员' : '普通用户' }}</span></span>
           <span class="u-cell u-sessions" data-label="会话">
             <template v-if="u.role === 'admin'"><span class="muted">全部</span></template>
             <template v-else-if="!u.sessions.length"><span class="faint">无</span></template>
@@ -75,13 +75,13 @@ async function toggleDisabled(u: User) {
           <span class="u-cell faint" data-label="登录" :title="time(u.last_login_at || undefined)">{{ u.last_login_at ? shortTime(u.last_login_at) : '从未' }}</span>
           <span class="u-actions">
             <button class="btn sm" @click="editor?.open(u)"><Icon name="pencil" :size="13" />编辑</button>
-            <button class="btn ghost icon-only sm" title="重置密码" aria-label="重置密码" @click="openReset(u)"><Icon name="key" :size="14" /></button>
-            <button class="btn ghost icon-only sm" :title="u.disabled ? '启用' : '停用'" :aria-label="u.disabled ? '启用' : '停用'" :disabled="self(u)" @click="toggleDisabled(u)"><Icon :name="u.disabled ? 'check' : 'ban'" :size="14" /></button>
-            <button class="btn ghost icon-only sm danger-ghost" title="删除" aria-label="删除" :disabled="self(u)" @click="openDelete(u)"><Icon name="trash" :size="14" /></button>
+            <button class="btn ghost icon-only sm" data-tip="重置密码" aria-label="重置密码" @click="openReset(u)"><Icon name="key" :size="14" /></button>
+            <button class="btn ghost icon-only sm" :data-tip="u.disabled ? '启用账号' : '停用账号'" :aria-label="u.disabled ? '启用' : '停用'" :disabled="self(u)" @click="toggleDisabled(u)"><Icon :name="u.disabled ? 'check' : 'ban'" :size="14" /></button>
+            <button class="btn ghost icon-only sm danger-ghost" data-tip="删除用户" aria-label="删除" :disabled="self(u)" @click="openDelete(u)"><Icon name="trash" :size="14" /></button>
           </span>
         </div>
         <div v-if="users.loaded && !list.length" class="state-box">
-          <Icon name="users" :size="18" /><span>{{ users.list.length ? '没有匹配的用户' : '还没有用户' }}</span>
+          <div class="state-icon"><Icon name="users" :size="20" /></div><strong>{{ users.list.length ? '没有匹配的用户' : '还没有用户' }}</strong><span v-if="!users.list.length">点击右上角「新建用户」添加第一个账号。</span>
         </div>
       </div>
       <p class="users-foot muted"><Icon name="key" :size="12" />只有管理员可以新建和删除会话；普通用户只能查看被授权的会话并在其中发消息。访问令牌（WEBHOOK_TOKEN）始终拥有全部权限，可用于 Webhook 集成和找回管理员。</p>
@@ -89,24 +89,30 @@ async function toggleDisabled(u: User) {
     <UserDialog ref="editor" />
     <dialog ref="pwDialog" class="dialog" @click.self="pwDialog?.close()">
       <form @submit.prevent="doReset">
-        <h2>重置密码</h2>
+        <div class="dialog-head">
+          <h2><span class="title-icon"><Icon name="key" :size="16" /></span>重置密码</h2>
+          <button type="button" class="btn ghost icon-only sm" aria-label="关闭" data-tip="关闭 (Esc)" @click="pwDialog?.close()"><Icon name="x" :size="15" /></button>
+        </div>
         <p class="muted">为 <b>{{ pwUser?.username }}</b> 设置新密码。该用户所有已登录设备会退出。</p>
         <label class="field-label" for="reset-pw">新密码</label>
         <input id="reset-pw" v-model="pw" class="input" type="password" autocomplete="new-password" minlength="8" required>
         <small class="field-hint" :class="{ error: !!pwError }">{{ pwError || '至少 8 位' }}</small>
         <div class="dialog-actions">
           <button type="button" class="btn" @click="pwDialog?.close()">取消</button>
-          <button class="btn primary" :disabled="pwBusy || pw.length < 8">{{ pwBusy ? '保存中…' : '重置' }}</button>
+          <button class="btn primary" :disabled="pwBusy || pw.length < 8"><span v-if="pwBusy" class="spinner sm inv" />{{ pwBusy ? '保存中…' : '重置密码' }}</button>
         </div>
       </form>
     </dialog>
     <dialog ref="delDialog" class="dialog" @click.self="delDialog?.close()">
-      <h2>删除用户</h2>
+      <div class="dialog-head">
+        <h2><span class="title-icon danger"><Icon name="trash" :size="16" /></span>删除用户</h2>
+        <button type="button" class="btn ghost icon-only sm" aria-label="关闭" data-tip="关闭 (Esc)" @click="delDialog?.close()"><Icon name="x" :size="15" /></button>
+      </div>
       <p class="mono del-key">{{ delUser?.username }}</p>
       <p class="muted">删除账号及其会话授权，并立即退出所有设备。会话本身不会被删除。此操作无法撤销。</p>
       <div class="dialog-actions">
         <button class="btn" @click="delDialog?.close()">取消</button>
-        <button class="btn danger-solid" :disabled="delBusy" @click="doDelete">{{ delBusy ? '删除中…' : '删除' }}</button>
+        <button class="btn danger-solid" :disabled="delBusy" @click="doDelete"><span v-if="delBusy" class="spinner sm inv" />{{ delBusy ? '删除中…' : '删除' }}</button>
       </div>
     </dialog>
   </div>

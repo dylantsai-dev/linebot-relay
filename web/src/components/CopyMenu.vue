@@ -25,7 +25,8 @@ const items = () => [
 function place() {
   if (!props.anchor || !menu.value) return
   const rect = props.anchor.getBoundingClientRect(), m = menu.value
-  pos.value = { left: Math.max(8, Math.min(rect.left, innerWidth - m.offsetWidth - 8)), top: Math.min(rect.bottom + 4, innerHeight - m.offsetHeight - 8) }
+  const left = rect.left > innerWidth / 2 ? rect.right - m.offsetWidth : rect.left
+  pos.value = { left: Math.max(8, Math.min(left, innerWidth - m.offsetWidth - 8)), top: Math.min(rect.bottom + 4, innerHeight - m.offsetHeight - 8) }
 }
 watch(() => props.anchor, async a => { if (!a) return; if (isAdmin.value) void webhookToken().catch(() => {}); await nextTick(); place(); menu.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus() }, { immediate: true })
 
@@ -53,10 +54,10 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); re
   <Teleport to="body">
     <Transition name="pop">
       <div v-if="anchor" ref="menu" class="menu" role="menu" :style="{ left: pos.left + 'px', top: pos.top + 'px' }" @keydown="onKey">
-        <div class="menu-title">{{ sessionKey ? `复制 · ${sessionKey}` : '复制 Webhook' }}</div>
-        <button v-for="item in items()" :key="item.label" type="button" role="menuitem" class="menu-item" :class="{ danger: item.danger }" :disabled="item.disabled" @click="pick(item)">
+        <div class="menu-title"><Icon name="webhook" :size="13" /><span>{{ sessionKey ? `复制 · ${sessionKey}` : '复制 Webhook' }}</span></div>
+        <template v-for="(item, i) in items()" :key="item.label"><div v-if="i === 3 || item.danger" class="menu-sep" role="separator" /><button type="button" role="menuitem" class="menu-item" :class="{ danger: item.danger }" :disabled="item.disabled" @click="pick(item)">
           <Icon :name="item.icon" :size="14" /><span class="menu-label">{{ item.label }}</span><span class="menu-hint">{{ item.hint }}</span>
-        </button>
+        </button></template>
       </div>
     </Transition>
   </Teleport>

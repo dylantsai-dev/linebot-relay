@@ -39,7 +39,18 @@ export const state = reactive({
   /** Send mode while a turn is running: 排队 (default) or 引导. */
   sendMode: 'queue' as SendMode,
   stopping: false,
+  /** Bumped to ask SessionsView to open the 关联会话 dialog (from the sidebar). */
+  linkRequest: 0,
 })
+
+/* ---------- sidebar (desktop collapse, persisted) ---------- */
+export const sidebarCollapsed = ref((() => { try { return localStorage.getItem('relay-sidebar') === 'collapsed' } catch { return false } })())
+watch(sidebarCollapsed, v => { try { v ? localStorage.setItem('relay-sidebar', 'collapsed') : localStorage.removeItem('relay-sidebar') } catch { /* ignore */ } })
+export function toggleSidebar() {
+  if (matchMedia('(max-width: 767px)').matches) state.drawer = !state.drawer
+  else sidebarCollapsed.value = !sidebarCollapsed.value
+}
+export function requestLink() { state.tab = 'sessions'; state.drawer = false; state.linkRequest++ }
 
 /* ---------- toast ---------- */
 export const toastState = reactive({ text: '', ok: false, visible: false, id: 0 })

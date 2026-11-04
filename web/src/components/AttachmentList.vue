@@ -18,6 +18,7 @@ watchEffect(() => {
   })
 })
 const signedFile = (file: Attachment) => (file.url && /^\/api\/media\/[^?]+\?.*\bt=f\b/.test(file.url) ? file.url : '')
+const fileIcon = (name?: string) => (/\.(zip|tar|gz|tgz|7z|rar)$/i.test(name || '') ? 'file-archive' : /\.(js|ts|py|go|rs|json|ya?ml|sh|html|css|vue|c|cpp|java)$/i.test(name || '') ? 'file-code' : 'file-text')
 async function download(file: Attachment) {
   try {
     const url = signedFile(file) || file.preview || (file.path ? await attachmentBlob(file.path) : '')
@@ -34,10 +35,10 @@ async function download(file: Attachment) {
         <span v-else class="att-placeholder">{{ failed[i] ? `${file.name || '图片'}（读取失败）` : file.name || '图片' }}</span>
       </a>
       <a v-else-if="signedFile(file)" class="chip" :href="signedFile(file)" :download="file.name || 'attachment'" :title="`下载 ${file.name || '附件'}`">
-        <Icon name="file" :size="14" /><span class="chip-name">{{ file.name || '附件' }}</span><span class="chip-size">{{ fileSize(file.size) }}</span>
+        <span class="chip-icon"><Icon :name="fileIcon(file.name)" :size="15" /></span><span class="chip-text"><span class="chip-name">{{ file.name || '附件' }}</span><span class="chip-size">{{ fileSize(file.size) }}</span></span><Icon name="download" :size="14" class="chip-dl" />
       </a>
       <button v-else type="button" class="chip" :disabled="!file.path && !file.preview" @click="download(file)">
-        <Icon name="file" :size="14" /><span class="chip-name">{{ file.name || '附件' }}</span><span class="chip-size">{{ fileSize(file.size) }}</span>
+        <span class="chip-icon"><Icon :name="fileIcon(file.name)" :size="15" /></span><span class="chip-text"><span class="chip-name">{{ file.name || '附件' }}</span><span class="chip-size">{{ fileSize(file.size) }}</span></span><Icon name="download" :size="14" class="chip-dl" />
       </button>
     </template>
   </div>

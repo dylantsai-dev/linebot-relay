@@ -28,11 +28,15 @@ async function submit() {
 </script>
 <template>
   <div class="login">
-    <button class="btn ghost icon-only login-theme" :title="isDark ? '浅色模式' : '深色模式'" aria-label="切换深浅主题" @click="toggleTheme"><Icon :name="isDark ? 'sun' : 'moon'" /></button>
+    <button class="btn ghost icon-only login-theme" :data-tip="isDark ? '浅色模式' : '深色模式'" aria-label="切换深浅主题" @click="toggleTheme"><Icon :name="isDark ? 'sun' : 'moon'" /></button>
     <form class="login-card" @submit.prevent="submit">
-      <BrandMark class="login-mark" :size="36" />
-      <h1>Codex Relay</h1>
-      <p class="login-sub">{{ mode === 'password' ? '使用账号登录控制台' : '使用访问令牌（WEBHOOK_TOKEN）登录' }}</p>
+      <BrandMark class="login-mark" :size="44" />
+      <h1 class="display">欢迎回来</h1>
+      <p class="login-sub">{{ mode === 'password' ? '登录 Codex Relay 控制台' : '使用访问令牌（WEBHOOK_TOKEN）登录' }}</p>
+      <div class="segmented login-tabs" role="tablist" aria-label="登录方式">
+        <button type="button" role="tab" :aria-selected="mode === 'password'" :class="{ on: mode === 'password' }" @click="switchMode('password')"><Icon name="user" :size="14" />账号密码</button>
+        <button type="button" role="tab" :aria-selected="mode === 'token'" :class="{ on: mode === 'token' }" @click="switchMode('token')"><Icon name="key" :size="14" />访问令牌</button>
+      </div>
       <p v-if="needsSetup && mode === 'token'" class="login-note"><Icon name="shield" :size="13" />尚未创建管理员。请先用访问令牌登录，再创建管理员账号。</p>
       <template v-if="mode === 'password'">
         <label class="field-label" for="username">用户名</label>
@@ -46,13 +50,10 @@ async function submit() {
       </template>
       <label class="check"><input v-model="remember" type="checkbox"> 记住我</label>
       <button class="btn primary block" :disabled="busy || !ready()">
-        <span v-if="busy" class="spinner sm inv" />{{ busy ? '验证中…' : '登录' }}
+        <span v-if="busy" class="spinner sm inv" /><Icon v-else name="login" :size="15" />{{ busy ? '验证中…' : '登录' }}
       </button>
       <p class="login-error" role="alert">{{ error }}</p>
-      <button type="button" class="link-btn" @click="switchMode(mode === 'password' ? 'token' : 'password')">
-        {{ mode === 'password' ? '使用访问令牌登录' : '使用用户名和密码登录' }}
-      </button>
     </form>
-    <p class="login-foot">Webhook → Codex App 会话中继</p>
+    <p class="login-foot"><Icon name="webhook" :size="13" />Webhook → Codex App 会话中继</p>
   </div>
 </template>

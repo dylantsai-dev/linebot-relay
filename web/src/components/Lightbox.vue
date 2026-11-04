@@ -13,8 +13,8 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey))
     <div v-if="state.lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="查看图片" @click.self="close">
       <img :src="state.lightbox.src" :alt="state.lightbox.alt" referrerpolicy="no-referrer">
       <div class="lightbox-bar">
-        <a class="btn sm" :href="state.lightbox.src" target="_blank" rel="noopener noreferrer" :download="state.lightbox.src.startsWith('blob:') ? 'image' : undefined">原图</a>
-        <button type="button" class="btn sm" aria-label="关闭" @click="close"><Icon name="x" :size="14" /></button>
+        <a class="btn sm" :href="state.lightbox.src" target="_blank" rel="noopener noreferrer" :download="state.lightbox.src.startsWith('blob:') ? 'image' : undefined"><Icon name="download" :size="14" />原图</a>
+        <button type="button" class="btn sm icon-only" aria-label="关闭" data-tip="关闭 (Esc)" @click="close"><Icon name="x" :size="14" /></button>
       </div>
     </div>
   </Transition>
