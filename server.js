@@ -30,8 +30,9 @@ const config = {
   work: path.resolve(process.env.WORK_DIR || '/opt/linebot-relay/work'),
   logs: path.resolve(process.env.LOG_DIR || '/opt/linebot-relay/logs'),
   uploads: path.resolve(process.env.UPLOAD_DIR || '/opt/linebot-relay/uploads'),
-  maxBytes: positiveInteger('MAX_FILE_BYTES', 20 * 1024 * 1024),
-  maxFiles: positiveInteger('MAX_FILES', 5),
+  maxBytes: positiveInteger('MAX_FILE_BYTES', 50 * 1024 * 1024),
+  maxFiles: positiveInteger('MAX_FILES', 10),
+  maxTotal: positiveInteger('MAX_TOTAL_BYTES', 100 * 1024 * 1024),
   concurrency: positiveInteger('MAX_CONCURRENCY', 2),
   timeout: positiveInteger('CODEX_TIMEOUT_MS', 600000),
   codexHome: path.resolve(process.env.CODEX_HOME || '/root/.codex'),
@@ -54,7 +55,6 @@ async function seedAdmin() {
   try { await users.create({ username, password, role: 'admin' }); console.log(`Seeded admin user ${username}`); }
   catch (error) { console.error('Admin seed failed:', error.message); }
 }
-const queues = new Map();
 const historyDir = path.join(config.data, 'history');
 fs.mkdirSync(historyDir, { recursive: true });
 const requestsFile = path.join(config.data, 'requests.jsonl');
@@ -189,8 +189,10 @@ function threadHistory(thread, local) {
     const items = turn.items || [];
     for (const item of items.filter(item => item.type === 'userMessage')) {
       const { text, fullText, attachments } = parseUserContent(item);
-      const match = local.find(entry => entry.role === 'user' && (entry.text === text || entry.text === fullText || entry.text.trim() === text) &&
-        ['webhook', 'console'].includes(entry.source) && Math.abs(Date.parse(entry.time) - Date.parse(started)) <= 180000);
+      // The closest not-yet-matched relay entry: the same text may be sent again within minutes.
+      const distance = entry => Math.abs(Date.parse(entry.time) - Date.parse(started));
+      const match = local.filter(entry => entry.role === 'user' && !matchedUsers.has(entry) && (entry.text === text || entry.text === fullText || entry.text.trim() === text) &&
+        ['webhook', 'console'].includes(entry.source) && distance(entry) <= 180000).sort((a, b) => distance(a) - distance(b))[0];
       if (match) matchedUsers.add(match);
       history.push({ role: 'user', text, time: started, source: match?.source || 'app', ...(attachments.length ? { attachments: attachments.map(file => ({ ...file, ...(match?.attachments?.find(localFile => localFile.path === file.path) || {}) })) } : match?.attachments?.length ? { attachments: match.attachments } : {}) });
       // The thread is authoritative for a turn that reached it; drop relay-side timeouts/disconnect errors for it.
@@ -212,6 +214,7 @@ function threadHistory(thread, local) {
         else history.push({ role: 'assistant', text: '', time, duration_ms: turn.durationMs ?? undefined, codex_session_id: thread.id, images });
       }
     }
+    if (turn.status === 'interrupted') history.push({ role: 'error', text: '回合已停止', time, interrupted: true });
     if (turn.status === 'failed') {
       const text = turn.error?.message || 'Codex turn failed';
       history.push({ role: 'error', text, time });
@@ -255,6 +258,15 @@ function decorateEntry(entry, key, principal, roots) {
     next = { ...next };
     if (images.length) next.images = images; else delete next.images;
   }
+  // Uploaded files of any type get a signed, grant-checked download URL.
+  if (next.attachments?.some(file => file.path && !file.url)) {
+    const root = path.join(config.uploads, safeKey(key));
+    next = { ...next, attachments: next.attachments.map(file => {
+      if (!file.path || file.url) return file;
+      const url = insideDir(root, path.resolve(file.path)) ? media.fileUrl(file.path, root, key, uid) : null;
+      return url ? { ...file, url } : file;
+    }) };
+  }
   // Attachments outside UPLOAD_DIR (e.g. pasted into the Codex App) cannot use /api/files.
   if (next.attachments?.some(file => file.kind === 'image' && file.path && !insideDir(config.uploads, path.resolve(file.path)))) {
     next = { ...next, attachments: next.attachments.map(file => {
@@ -287,12 +299,12 @@ async function sessionHistory(key, limit, principal) {
       const running = !!active || appserver.threadState(id).status === 'active';
       const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
       const roots = mediaRoots(key, thread);
-      return { key, session: key, history: threadHistory(thread, local).slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'thread', revision: cache.revision, running,
+      return { key, session: key, history: threadHistory(thread, local).slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'thread', revision: cache.revision, running: running || !!live.get(key)?.running, queue: publicQueue(key),
         ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread) } : {}) };
     } catch { /* Preserve local history if the App is unavailable. */ }
   }
   const roots = mediaRoots(key, null);
-  return { key, session: key, history: local.slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'local', running: !!live.get(key)?.running };
+  return { key, session: key, history: local.slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'local', running: !!live.get(key)?.running, queue: publicQueue(key) };
 }
 
 // ----- Codex thread lookup: sessions link existing threads -----
@@ -462,44 +474,169 @@ function runCodexExec(key, message, sessionId) {
   });
 }
 
-function enqueue(body, source, requestId) {
-  const now = new Date().toISOString();
-  const state = live.get(body.session) || { running: false, queued: 0, created_at: now, updated_at: now };
-  state.queued++;
-  state.updated_at = now;
-  live.set(body.session, state);
-  const previous = queues.get(body.session) || Promise.resolve();
-  const job = previous.catch(() => {}).then(async () => {
-    await acquire();
-    state.queued--;
-    state.running = true;
-    const started = Date.now();
-    try {
-      appendHistory(body.session, { role: 'user', text: body.message, ...(body.attachments.length ? { attachments: body.attachments } : {}), time: new Date().toISOString(), source, request_id: requestId });
-      if (body.codex_session_id) {
-        const now = new Date().toISOString();
-        sessions[body.session] = { codex_session_id: body.codex_session_id, created_at: sessions[body.session]?.created_at || now, updated_at: now, messages: sessions[body.session]?.messages || 0 };
-        persist();
-        if (appserver) void appserver.subscribe(body.codex_session_id).catch(() => {});
-      }
-      const result = await runCodex(body.session, body.input ? body.input.filter(part => part.type === 'text').map(part => part.text).join('\n') : body.message, sessions[body.session]?.codex_session_id, body.input);
-      const now = new Date().toISOString();
-      sessions[body.session] = { codex_session_id: result.codex_session_id, created_at: sessions[body.session]?.created_at || now, updated_at: now, messages: (sessions[body.session]?.messages || 0) + 1 };
-      persist();
-      appendHistory(body.session, { role: 'assistant', text: result.reply, time: now, duration_ms: Date.now() - started, codex_session_id: result.codex_session_id, request_id: requestId });
-      return result;
-    } catch (error) {
-      appendHistory(body.session, { role: 'error', text: error.message, time: new Date().toISOString(), duration_ms: Date.now() - started, codex_session_id: sessions[body.session]?.codex_session_id || null, request_id: requestId });
-      throw error;
-    } finally {
-      state.running = false;
-      if (!state.queued) live.delete(body.session);
-      release();
+// ----- per-session message queue: 排队 (queue) and 引导 (steer) -----
+// Every session has an ordered queue. A queued message waits until the Codex thread is idle (no turn
+// running, whoever started it) and is then sent as a new turn. A steer message is injected into the
+// running turn with app-server turn/steer; with no running turn it jumps to the head of the queue.
+const sessionQueues = new Map();
+const queueListeners = new Set();
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+function sessionQueue(key) {
+  if (!sessionQueues.has(key)) sessionQueues.set(key, { items: [], running: null, steered: [], worker: null });
+  return sessionQueues.get(key);
+}
+function publicEntry(entry, status) {
+  return { id: entry.id, text: entry.message.slice(0, 4000), mode: entry.mode, status, source: entry.source, user: entry.user || null, created_at: entry.created_at,
+    ...(entry.started_at ? { started_at: entry.started_at } : {}), ...(entry.fallback ? { fallback: entry.fallback } : {}),
+    attachments: (entry.attachments || []).map(file => ({ name: file.name, size: file.size, mime: file.mime, kind: file.kind })) };
+}
+function publicQueue(key) {
+  const q = sessionQueues.get(key);
+  if (!q) return [];
+  return [...q.steered.map(entry => publicEntry(entry, 'steered')), ...(q.running ? [publicEntry(q.running, 'running')] : []), ...q.items.map(entry => publicEntry(entry, 'queued'))];
+}
+function syncLive(key) {
+  const q = sessionQueues.get(key), now = new Date().toISOString();
+  const busy = !!(q && (q.running || q.steered.length));
+  if (!q || (!busy && !q.items.length)) {
+    live.delete(key);
+    if (q && !q.worker) sessionQueues.delete(key);
+  } else {
+    const state = live.get(key) || { created_at: now };
+    Object.assign(state, { running: !!q.running || q.steered.length > 0, queued: q.items.length, updated_at: now });
+    live.set(key, state);
+  }
+  const queue = publicQueue(key);
+  for (const listener of [...queueListeners]) { try { listener(key, queue); } catch { /* listener errors stay local */ } }
+}
+function threadBusy(key) {
+  const id = sessions[key]?.codex_session_id;
+  return !!(appserver && id && appserver.busy(id));
+}
+// Wait for a thread to go idle. Periodically re-read it so a missed turn/completed cannot block forever.
+async function waitIdle(key, q) {
+  let checked = Date.now();
+  while (q.items.length && threadBusy(key)) {
+    await pause(250);
+    if (Date.now() - checked > 8000) {
+      checked = Date.now();
+      try { await appserver.refreshActive(sessions[key].codex_session_id); } catch { /* keep waiting */ }
     }
-  });
-  queues.set(body.session, job);
-  job.finally(() => { if (queues.get(body.session) === job) queues.delete(body.session); }).catch(() => {});
-  return job;
+  }
+}
+function drain(key) {
+  const q = sessionQueue(key);
+  if (q.worker) return;
+  q.worker = (async () => {
+    while (q.items.length) {
+      await waitIdle(key, q);
+      if (!q.items.length) break;
+      await acquire();
+      const entry = q.items.shift();
+      if (!entry) { release(); continue; }
+      q.running = entry;
+      entry.started_at = new Date().toISOString();
+      syncLive(key);
+      try { entry.resolve(await runEntry(key, entry)); }
+      catch (error) { entry.reject(error); }
+      finally { q.running = null; release(); syncLive(key); }
+    }
+  })().finally(() => { q.worker = null; if (q.items.length) drain(key); else syncLive(key); });
+}
+async function runEntry(key, entry) {
+  const started = Date.now();
+  try {
+    appendHistory(key, { role: 'user', text: entry.message, ...(entry.attachments.length ? { attachments: entry.attachments } : {}), time: new Date().toISOString(), source: entry.source, request_id: entry.request_id, ...(entry.mode === 'steer' ? { mode: 'steer' } : {}) });
+    if (entry.codex_session_id) {
+      const now = new Date().toISOString();
+      sessions[key] = { codex_session_id: entry.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.messages || 0 };
+      persist();
+      if (appserver) void appserver.subscribe(entry.codex_session_id).catch(() => {});
+    }
+    const result = await runCodex(key, entry.input ? entry.input.filter(part => part.type === 'text').map(part => part.text).join('\n') : entry.message, sessions[key]?.codex_session_id, entry.input);
+    const now = new Date().toISOString();
+    sessions[key] = { codex_session_id: result.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: (sessions[key]?.messages || 0) + 1 };
+    persist();
+    appendHistory(key, { role: 'assistant', text: result.reply, time: now, duration_ms: Date.now() - started, codex_session_id: result.codex_session_id, request_id: entry.request_id });
+    return { ...result, mode: entry.mode, ...(entry.fallback ? { steer: entry.fallback } : {}) };
+  } catch (error) {
+    appendHistory(key, { role: 'error', text: error.message, time: new Date().toISOString(), duration_ms: Date.now() - started, codex_session_id: sessions[key]?.codex_session_id || null, request_id: entry.request_id });
+    throw error;
+  }
+}
+// Steer: inject into the running turn when there is one; otherwise send next (head of the queue).
+async function steer(key, entry, q) {
+  const id = sessions[key]?.codex_session_id;
+  let turnId = null;
+  if (appserver && id && fs.existsSync(appserverSocket)) {
+    try {
+      await appserver.connect();
+      turnId = appserver.activeTurnId(id) || (appserver.busy(id) ? await appserver.refreshActive(id) : null);
+    } catch { turnId = null; }
+  }
+  if (!turnId) { entry.fallback = 'no_active_turn'; return false; }
+  const input = entry.input || [{ type: 'text', text: entry.message, text_elements: [] }];
+  try {
+    turnId = await appserver.steerTurn(id, turnId, input);
+  } catch (error) {
+    entry.fallback = 'steer_rejected';
+    entry.steer_error = String(error.message || error).slice(0, 200);
+    return false;
+  }
+  const started = Date.now();
+  entry.started_at = new Date().toISOString();
+  entry.turn_id = turnId;
+  appendHistory(key, { role: 'user', text: entry.message, ...(entry.attachments.length ? { attachments: entry.attachments } : {}), time: entry.started_at, source: entry.source, request_id: entry.request_id, mode: 'steer' });
+  q.steered.push(entry);
+  syncLive(key);
+  appserver.waitTurn(id, turnId, config.timeout).then(reply => {
+    const now = new Date().toISOString();
+    if (sessions[key]) { sessions[key] = { ...sessions[key], updated_at: now, messages: (sessions[key].messages || 0) + 1 }; persist(); }
+    appendHistory(key, { role: 'assistant', text: reply, time: now, duration_ms: Date.now() - started, codex_session_id: id, request_id: entry.request_id });
+    entry.resolve({ session: key, codex_session_id: id, reply, transport: 'app-server', mode: 'steer', steered: true, turn_id: turnId });
+  }, error => {
+    appendHistory(key, { role: 'error', text: error.message, time: new Date().toISOString(), duration_ms: Date.now() - started, codex_session_id: id, request_id: entry.request_id });
+    entry.reject(error);
+  }).finally(() => { q.steered = q.steered.filter(item => item !== entry); syncLive(key); if (q.items.length) drain(key); });
+  return true;
+}
+function enqueue(body, source, requestId, { mode = 'queue', user = null } = {}) {
+  const q = sessionQueue(body.session);
+  const entry = { id: crypto.randomUUID(), key: body.session, message: body.message, attachments: body.attachments || [], input: body.input, codex_session_id: body.codex_session_id,
+    source, request_id: requestId, mode, user, created_at: new Date().toISOString() };
+  const job = new Promise((resolve, reject) => { entry.resolve = resolve; entry.reject = reject; });
+  job.catch(() => {});
+  entry.job = job;
+  const accepted = (async () => {
+    if (mode === 'steer' && await steer(body.session, entry, q)) return entry;
+    if (mode === 'steer') q.items.unshift(entry); else q.items.push(entry);
+    syncLive(body.session);
+    drain(body.session);
+    return entry;
+  })();
+  return { entry, job, accepted };
+}
+// Remove a message that has not been sent yet.
+function cancelQueued(key, id, principal) {
+  const q = sessionQueues.get(key);
+  const index = q ? q.items.findIndex(entry => entry.id === id) : -1;
+  if (index < 0) throw failure('该消息已发送或不存在', 404);
+  const entry = q.items[index];
+  if (!principal.admin && entry.user !== principal.user?.username) throw failure('只能撤回自己排队的消息', 403);
+  q.items.splice(index, 1);
+  entry.reject(Object.assign(new Error('排队消息已撤回'), { status: 409, cancelled: true }));
+  for (const file of entry.attachments || []) { try { fs.unlinkSync(file.path); } catch { /* already gone */ } }
+  syncLive(key);
+  return entry;
+}
+async function interruptSession(key) {
+  const id = sessions[key]?.codex_session_id;
+  if (!appserver || !id || !fs.existsSync(appserverSocket)) throw failure('Codex app-server 未连接，无法停止', 503);
+  await appserver.connect();
+  const turnId = appserver.activeTurnId(id) || await appserver.refreshActive(id);
+  if (!turnId) throw failure('当前没有正在运行的回合', 409);
+  await appserver.interruptTurn(id, turnId);
+  return turnId;
 }
 
 // ----- authentication & per-session authorization -----
@@ -636,7 +773,7 @@ function serveMedia(req, res, url) {
     const user = users.get(signed.uid);
     if (!user || user.disabled || (user.role !== 'admin' && !(users.isGranted(user.id, signed.key) && sessionExists(signed.key)))) { deny(); return; }
   }
-  media.serve(req, res, signed.file);
+  media.serve(req, res, signed.file, signed.download);
 }
 
 // ----- live streaming (SSE over fetch; the Authorization header works with fetch streaming) -----
@@ -667,10 +804,12 @@ function streamSession(req, res, key, principal) {
     const id = sessions[key]?.codex_session_id;
     const state = id && appserver ? appserver.threads.get(id) : null;
     const relay = live.get(key);
-    write(event('snapshot', { key, codex_session_id: id || null, running: !!(relay?.running || state?.status === 'active' || state?.live), queued: relay?.queued || 0, live: publicLive(state?.live || null, key, principal, cachedThread(key)) }));
+    write(event('snapshot', { key, codex_session_id: id || null, running: !!(relay?.running || state?.status === 'active' || state?.live), queued: relay?.queued || 0, queue: publicQueue(key), live: publicLive(state?.live || null, key, principal, cachedThread(key)) }));
   };
   write('retry: 3000\n\n');
   snapshot();
+  const onQueue = (changed, queue) => { if (changed === key) { push('queue', { queue, running: !!live.get(key)?.running || threadBusy(key) }); flush(); } };
+  queueListeners.add(onQueue);
   const off = appserver ? appserver.onLive((threadId, data) => {
     if (threadId !== sessions[key]?.codex_session_id) return;
     // Copy now: the live item keeps changing (deltas) before the batch is flushed.
@@ -697,19 +836,29 @@ function streamSession(req, res, key, principal) {
   function close() {
     if (closed) return;
     closed = true;
-    clearInterval(heartbeat); clearTimeout(flushTimer); off(); streams.delete(entry);
+    clearInterval(heartbeat); clearTimeout(flushTimer); off(); queueListeners.delete(onQueue); streams.delete(entry);
   }
   req.on('close', close);
   res.on('close', close);
 }
 
+// /webhook takes mode from the body (default 排队); /webhook/queue and /webhook/steer fix it by path.
+const WEBHOOK_ROUTES = ['/webhook', '/webhook/queue', '/webhook/steer'];
+const SEND_ROUTES = [...WEBHOOK_ROUTES, '/api/send'];
+function sendMode(route, body) {
+  if (route === '/webhook/queue') return 'queue';
+  if (route === '/webhook/steer') return 'steer';
+  const mode = body.mode === undefined || body.mode === '' ? 'queue' : body.mode;
+  if (!['queue', 'steer'].includes(mode)) throw failure('Invalid mode: 应为 queue（排队）或 steer（引导）', 400);
+  return mode;
+}
 const server = http.createServer(async (req, res) => {
   const started = Date.now(), requestId = crypto.randomUUID();
   let body, route;
   let requestRecorded = false;
   const record = (status, extra = {}) => {
     log({ request_id: requestId, session: body?.session, status, duration: Date.now() - started, ...extra });
-    if (['/webhook', '/api/send'].includes(route) && !requestRecorded && status !== 202) {
+    if (SEND_ROUTES.includes(route) && !requestRecorded && status !== 202) {
       requestRecorded = true;
       recordRequest({ time: new Date().toISOString(), request_id: requestId, session: typeof body?.session === 'string' ? body.session.slice(0, 128) : null, source: route === '/api/send' ? 'console' : 'webhook', method: req.method, path: route, status, ok: status >= 200 && status < 300, duration_ms: Date.now() - started, error: typeof extra.error === 'string' ? extra.error.slice(0, 200) : null });
     }
@@ -721,7 +870,7 @@ const server = http.createServer(async (req, res) => {
     route = rawPath.startsWith('/api/sessions/') ? rawPath : url.pathname;
     if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console' || route.startsWith('/console/'))) { serveConsole(req, res, route); return; }
     if (req.method === 'GET' && route === '/health') { send(res, 200, { ok: true }); record(200); return; }
-    if (!(req.method === 'GET' && route === '/sessions') && !(req.method === 'POST' && route === '/webhook') && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
+    if (!(req.method === 'GET' && route === '/sessions') && !(req.method === 'POST' && WEBHOOK_ROUTES.includes(route)) && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
     if (req.method === 'GET' && route === '/api/auth/status') { send(res, 200, { needs_setup: !users.hasAdmin() }); return; }
     if (req.method === 'POST' && route === '/api/auth/login') {
       const input = await readJson(req);
@@ -740,7 +889,7 @@ const server = http.createServer(async (req, res) => {
         if (!fileVisible(principal, url.searchParams.get('path'))) throw failure('File not found', 404);
         serveFile(req, res, url.searchParams.get('path'), config.uploads); return;
       }
-      if (req.method === 'GET' && route === '/api/whoami') { send(res, 200, principalInfo(principal)); return; }
+      if (req.method === 'GET' && route === '/api/whoami') { send(res, 200, { ...principalInfo(principal), limits: { max_file_bytes: config.maxBytes, max_files: config.maxFiles, max_total_bytes: config.maxTotal } }); return; }
       if (req.method === 'POST' && route === '/api/auth/logout') { if (principal.tokenHash) users.revoke(principal.tokenHash); send(res, 200, { ok: true }); return; }
       if (req.method === 'POST' && route === '/api/auth/password') {
         if (!principal.user) throw failure('访问令牌登录无法修改密码', 400);
@@ -784,7 +933,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/queue(?:\/[0-9a-f-]{36})?)?$/);
       if (match) {
         let key;
         try {
@@ -810,6 +959,9 @@ const server = http.createServer(async (req, res) => {
         if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
         if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550), principal)); return; }
         if (req.method === 'GET' && match[2] === '/stream') { streamSession(req, res, key, principal); return; }
+        if (req.method === 'GET' && match[2] === '/queue') { send(res, 200, { queue: publicQueue(key), running: !!live.get(key)?.running || threadBusy(key) }); return; }
+        if (req.method === 'DELETE' && match[2]?.startsWith('/queue/')) { const entry = cancelQueued(key, match[2].slice(7), principal); send(res, 200, { ok: true, id: entry.id }); return; }
+        if (req.method === 'POST' && match[2] === '/interrupt') { const turnId = await interruptSession(key); send(res, 200, { ok: true, turn_id: turnId }); return; }
         if (req.method === 'DELETE' && !match[2]) {
           if (!principal.admin) throw failure('仅管理员可以删除会话', 403);
           if (live.has(key)) throw failure('Session is running or queued', 409);
@@ -826,6 +978,7 @@ const server = http.createServer(async (req, res) => {
     body = parsed.body;
     if (body && typeof body === 'object') body._fileCount = parsed.files.length;
     validate(body);
+    const mode = sendMode(route, body);
     authorizeSend(principal, body);
     // Linking must name a thread that exists in Codex; nothing is created otherwise.
     if (body.codex_session_id !== undefined && body.codex_session_id !== sessions[body.session]?.codex_session_id) await verifyThread(body.codex_session_id);
@@ -835,9 +988,22 @@ const server = http.createServer(async (req, res) => {
     const prepared = await prepareAttachments(body, parsed.files, config, safeKey);
     body.attachments = prepared.attachments;
     body.input = prepared.input;
-    const job = enqueue(body, route === '/api/send' ? 'console' : 'webhook', requestId);
-    if (route === '/webhook' && body.callback_url !== undefined) {
-      send(res, 202, { accepted: true, session: body.session });
+    const { entry, job, accepted } = enqueue(body, route === '/api/send' ? 'console' : 'webhook', requestId, { mode, user: principal.user?.username || null });
+    await accepted;
+    // Console sends return at once; the turn is followed over the stream.
+    if (route === '/api/send' && ['1', 'true', true].includes(body.async)) {
+      const q = sessionQueues.get(body.session);
+      const index = q ? q.items.indexOf(entry) : -1;
+      // First in line with nothing running: the worker is about to start it.
+      const startsNow = index === 0 && !q.running && !threadBusy(body.session);
+      const status = q?.steered.includes(entry) ? 'steered' : q?.running === entry || startsNow ? 'running' : 'queued';
+      send(res, 202, { accepted: true, session: body.session, id: entry.id, mode, status, position: status === 'queued' ? index + 1 : 0, ...(entry.fallback ? { steer_fallback: entry.fallback } : {}) });
+      record(202);
+      void job.then(result => record(200, { message: body.message.slice(0, 200), reply: result.reply.slice(0, 200), transport: result.transport || 'exec' }), error => record(error.status || 500, { error: error.message, ...(error.transport ? { transport: error.transport } : {}) }));
+      return;
+    }
+    if (route !== '/api/send' && body.callback_url !== undefined) {
+      send(res, 202, { accepted: true, session: body.session, id: entry.id, mode });
       record(202);
       void (async () => {
         let payload;

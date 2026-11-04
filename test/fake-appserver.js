@@ -81,12 +81,13 @@ class FakeAppServer {
             notify('item/completed', { threadId, turnId, item: image });
           }
           turn.items.push({ type: 'agentMessage', phase: 'commentary', text: 'working' });
-          if (text !== '__no_final__') turn.items.push({ type: 'agentMessage', phase: 'final_answer', text: `reply:${text}` });
+          const reply = this.replyFor?.(text) ?? `reply:${text}`;
+          if (text !== '__no_final__') turn.items.push({ type: 'agentMessage', phase: 'final_answer', text: reply });
           turn.items.push({ type: 'agentMessage', phase: 'commentary', text: 'last commentary' });
           notify('item/completed', { threadId: 'unrelated-thread', turnId, item: { type: 'agentMessage', text: 'wrong thread' } });
           notify('item/completed', { threadId, turnId: 'unrelated-turn', item: { type: 'agentMessage', text: 'wrong turn' } });
           notify('item/completed', { threadId, turnId, item: { type: 'agentMessage', phase: 'commentary', text: 'working' } });
-          if (text !== '__no_final__') notify('item/completed', { threadId, turnId, item: { type: 'agentMessage', phase: 'final_answer', text: `reply:${text}` } });
+          if (text !== '__no_final__') notify('item/completed', { threadId, turnId, item: { type: 'agentMessage', phase: 'final_answer', text: reply } });
           notify('item/completed', { threadId, turnId, item: { type: 'agentMessage', phase: 'commentary', text: 'last commentary' } });
           if (text === '__failed__') notify('error', { threadId, turnId, error: { message: 'recorded failure' } });
           notify('turn/completed', { threadId, turn });
@@ -113,6 +114,9 @@ class FakeAppServer {
         } else if (text === '__app_slow__') {
           const timer = setTimeout(() => { this.timers.delete(timer); complete(); }, 40);
           this.timers.add(timer);
+        } else if (text.startsWith('__hold__') || this.holdAll) {
+          // Stays running until the test releases it (or it is interrupted).
+          (this.held ||= new Map()).set(threadId, () => { if (turn.status === 'inProgress') complete(); });
         } else if (text !== '__timeout__' && text !== '__late__' && text !== '__stream__') complete();
         if (text === '__late__' || text === '__completed_late__') {
           const timer = setTimeout(() => { this.timers.delete(timer); respond({ turn }); }, 150);
@@ -120,7 +124,27 @@ class FakeAppServer {
         } else respond({ turn });
         break;
       }
-      case 'turn/interrupt': respond({}); break;
+      case 'turn/interrupt': {
+        // Like Codex: an interrupted running turn completes with status "interrupted".
+        const turn = (this.turns.get(params.threadId) || []).find(t => t.id === params.turnId);
+        respond({});
+        if (turn && turn.status === 'inProgress') {
+          turn.status = 'interrupted'; turn.completedAt = Date.now() / 1000;
+          notify('turn/completed', { threadId: params.threadId, turn });
+          notify('thread/status/changed', { threadId: params.threadId, status: { type: 'idle' } });
+        }
+        break;
+      }
+      case 'turn/steer': {
+        const turns = this.turns.get(params.threadId) || [];
+        const active = turns.find(t => t.status === 'inProgress');
+        if (this.rejectSteer) { send({ id, error: { code: -32600, message: 'turn is not steerable' } }); break; }
+        if (!active || active.id !== params.expectedTurnId) { send({ id, error: { code: -32600, message: 'no active turn matching expectedTurnId' } }); break; }
+        active.items.push({ type: 'userMessage', content: params.input });
+        (this.steered ||= []).push({ threadId: params.threadId, turnId: active.id, text: params.input[0]?.text });
+        respond({ turnId: active.id });
+        break;
+      }
       case 'thread/archive': this.loaded.delete(params.threadId); respond({}); break;
       case 'thread/list':
         this.lastList = params;

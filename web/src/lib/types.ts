@@ -33,11 +33,15 @@ export interface MediaImage { name: string; kind?: 'image'; url: string; source?
 export type LiveKind = 'text' | 'reasoning' | 'plan' | 'command' | 'tool' | 'search' | 'file' | 'image' | 'other'
 export interface LiveItem { id: string; kind: LiveKind; done?: boolean; text?: string; title?: string; status?: string; exitCode?: number | null; output?: string; url?: string; phase?: string }
 export interface LiveTurn { turnId: string; startedAt: string; items: LiveItem[] }
-export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; live?: LiveTurn }
+export type SendMode = 'queue' | 'steer'
+/** Relay-side queue entry: steered into the running turn, running, or waiting (排队). */
+export interface QueueEntry { id: string; text: string; mode: SendMode; status: 'steered' | 'running' | 'queued'; source: string; user: string | null; created_at: string; started_at?: string; fallback?: 'no_active_turn' | 'steer_rejected'; attachments: Attachment[] }
+export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; live?: LiveTurn; queue?: QueueEntry[] }
 export interface CodexThread { id: string; title: string; preview: string; updated_at: string | null; created_at: string | null; cwd: string | null; status: string | null; source: string | null; linked: string[] }
 export interface Stats { today: { calls: number; failures: number; avg_duration_ms: number }; total_sessions: number; running: number; queued: number; uptime_s: number; scope?: 'granted' }
 export interface RequestRow { time: string; request_id: string; session: string | null; source: string; method: string; path: string; status: number | string; ok: boolean; duration_ms: number; error: string | null }
 export interface DraftFile { id: number; file: File; name: string; size: number; mime: string; kind: 'image' | 'file'; preview: string | null }
 export interface PendingSend { message: string; attachments: DraftFile[]; started: number }
 export interface User { id: number; username: string; role: 'admin' | 'user'; disabled: boolean; created_at: string; updated_at: string; last_login_at: string | null; sessions: string[] }
-export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }
+export interface Limits { max_file_bytes: number; max_files: number; max_total_bytes: number }
+export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; limits?: Limits; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }

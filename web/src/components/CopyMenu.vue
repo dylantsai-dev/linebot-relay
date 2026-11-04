@@ -11,8 +11,11 @@ const menu = ref<HTMLElement>()
 const pos = ref({ left: 0, top: 0 })
 
 const items = () => [
-  { label: 'Webhook 地址', hint: 'URL', icon: 'link', disabled: false, value: () => webhookUrl() },
+  { label: 'Webhook 地址', hint: '默认排队', icon: 'link', disabled: false, value: () => webhookUrl() },
+  { label: '排队 Webhook', hint: '/webhook/queue', icon: 'clock', disabled: false, value: () => webhookUrl('/webhook/queue') },
+  { label: '引导 Webhook', hint: '/webhook/steer', icon: 'steer', disabled: false, value: () => webhookUrl('/webhook/steer') },
   { label: 'curl（JSON）', hint: '$TOKEN', icon: 'terminal', disabled: !props.sessionKey, value: () => webhookCurl(props.sessionKey) },
+  { label: 'curl（引导）', hint: '/webhook/steer', icon: 'terminal', disabled: !props.sessionKey, value: () => webhookCurl(props.sessionKey, 'json', undefined, '/webhook/steer') },
   { label: 'curl（文件）', hint: 'multipart', icon: 'paperclip', disabled: !props.sessionKey, value: () => webhookCurl(props.sessionKey, 'file') },
   // The only option that ever puts the real token on the clipboard.
   // Admins only: non-admin accounts never receive the WEBHOOK_TOKEN.

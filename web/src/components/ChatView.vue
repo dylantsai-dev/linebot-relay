@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, MAX_FILES, canCreate } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, stopTurn, isAdmin } from '../store'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
 import { fileSize } from '../lib/format'
@@ -17,7 +17,12 @@ let dragDepth = 0
 
 const pending = computed(() => state.pending.get(state.selected))
 const drafts = computed(() => state.attachments.get(state.selected) || [])
-const running = computed(() => !!pending.value || state.threadRunning || selectedSession.value?.status === 'running')
+const busy = computed(() => state.threadRunning || selectedSession.value?.status === 'running' || state.queue.some(e => e.status !== 'queued'))
+const running = computed(() => !!pending.value || busy.value)
+const queued = computed(() => state.queue.filter(e => e.status === 'queued'))
+/** Show the mode switch whenever a new message would not start right away. */
+const showMode = computed(() => busy.value || queued.value.length > 0)
+const mode = computed(() => (showMode.value ? state.sendMode : 'queue'))
 
 // Stable keys so unchanged messages are never re-rendered between polls.
 const items = computed(() => {
@@ -35,14 +40,20 @@ const optimistic = computed<HistoryEntry | null>(() => {
   const echoed = state.history.some(e => e.role === 'user' && e.text === p.message && new Date(e.time || 0).getTime() >= p.started - 1000)
   return echoed ? null : { role: 'user', text: p.message, source: 'console', attachments: p.attachments.map(f => ({ name: f.name, size: f.size, kind: f.kind, preview: f.preview })) }
 })
+// Running / steered relay entries the thread history has not echoed yet (e.g. right after a refresh).
+const inflight = computed<{ id: string; entry: HistoryEntry; steered: boolean }[]>(() => state.queue
+  .filter(e => e.status !== 'queued')
+  .filter(e => !state.history.some(h => h.role === 'user' && h.text === e.text && new Date(h.time || 0).getTime() >= Date.parse(e.created_at) - 2000))
+  .filter(e => !(pending.value && pending.value.message === e.text))
+  .map(e => ({ id: e.id, steered: e.status === 'steered', entry: { role: 'user' as const, text: e.text, source: e.source, time: e.created_at, attachments: e.attachments } })))
 const elapsed = computed(() => (pending.value ? Math.max(0, Math.floor((state.now - pending.value.started) / 1000)) : 0))
 const liveShown = computed(() => running.value && !!state.live?.items.length)
 const liveElapsed = computed(() => (state.live?.startedAt ? Math.max(0, Math.floor((state.now - Date.parse(state.live.startedAt)) / 1000)) : undefined))
 
 /* ---- scroll: stick to bottom only when already near it; never jump otherwise ---- */
 let stick = true
-watch([items, optimistic, running, () => state.live], () => { const el = scroller.value; if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }, { flush: 'pre' })
-watch([items, optimistic, running, () => state.live], () => { const el = scroller.value; if (el && (stick || pending.value)) el.scrollTop = el.scrollHeight }, { flush: 'post' })
+watch([items, optimistic, running, inflight, () => state.live], () => { const el = scroller.value; if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }, { flush: 'pre' })
+watch([items, optimistic, running, inflight, () => state.live], () => { const el = scroller.value; if (el && (stick || pending.value)) el.scrollTop = el.scrollHeight }, { flush: 'post' })
 
 watch(() => state.selected, async (key, prev) => {
   if (prev !== undefined) textDrafts.set(prev, text.value)
@@ -59,16 +70,27 @@ async function submit() {
   if (!key || pending.value || (!value.trim() && !drafts.value.length)) return
   text.value = ''; textDrafts.delete(key); await nextTick(); grow()
   stick = true
-  const ok = await sendMessage(value)
+  const ok = await sendMessage(value, mode.value)
   if (!ok && state.selected === key && !text.value) { text.value = value; await nextTick(); grow() }
 }
 function onKey(e: KeyboardEvent) { if (e.key === 'Enter' && !e.isComposing && (!e.shiftKey || e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit() } }
+// Paste any file (screenshots, copied files); clipboard images without a real name get one.
 function onPaste(e: ClipboardEvent) {
-  const images = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file' && i.type.startsWith('image/'))
-  if (!images.length) return
+  const pasted = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file')
+  if (!pasted.length) return
   e.preventDefault()
-  addFiles(images.map((item, i) => { const f = item.getAsFile(); return f ? new File([f], `pasted-${Date.now()}${i ? `-${i}` : ''}.png`, { type: f.type }) : null }).filter((f): f is File => !!f))
+  addFiles(pasted.map((item, i) => {
+    const f = item.getAsFile()
+    if (!f) return null
+    if (f.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(f.name)) return f
+    const ext = (f.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'bin'
+    return new File([f], `pasted-${Date.now()}${i ? `-${i}` : ''}.${ext}`, { type: f.type })
+  }).filter((f): f is File => !!f))
 }
+// Admins withdraw anything; users only their own queued messages (the server enforces the same rule).
+const canWithdraw = (q: { user: string | null }) => isAdmin.value || (!!q.user && q.user === state.me?.user?.username)
+const queueTitle = (e: { mode: string; fallback?: string; user: string | null; source: string }) =>
+  [e.fallback === 'steer_rejected' ? '引导被拒绝，已改为队首排队' : e.mode === 'steer' ? '引导' : '排队', e.user ? `来自 ${e.user}` : e.source].join(' · ')
 function onPick() { if (fileInput.value?.files) addFiles(fileInput.value.files); if (fileInput.value) fileInput.value.value = '' }
 const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types || [])].includes('Files')
 function dragEnter(e: DragEvent) { if (!hasFiles(e) || !state.selected) return; e.preventDefault(); dragDepth++; dragging.value = true }
@@ -89,6 +111,8 @@ const retry = () => selectSession(state.selected)
         </div>
         <span class="spacer" />
         <Transition name="fade"><span v-if="running" class="status-pill"><span class="dot running" />运行中</span></Transition>
+        <span v-if="queued.length" class="src-pill" title="当前回合结束后依次发送">排队 {{ queued.length }}</span>
+        <button v-if="busy && !selectedSession?.draft" class="btn sm stop-btn" title="停止当前回合（turn/interrupt）" :disabled="state.stopping" @click="stopTurn"><Icon name="stop" :size="13" />停止</button>
         <span v-if="running && state.streaming" class="src-pill live" title="通过 SSE 实时推送">实时</span>
         <span v-if="state.historySource === 'local'" class="src-pill" title="Codex App 未连接，显示中继本地记录">本地记录</span>
         <button v-if="canCreate" class="btn ghost icon-only" title="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
@@ -118,6 +142,10 @@ const retry = () => selectSession(state.selected)
             <strong>开始对话</strong><span>发送第一条消息，消息会进入该 key 对应的 Codex 会话。</span>
           </div>
           <MessageItem v-for="item in items" :key="item.key" :entry="item.entry" />
+          <div v-for="f in inflight" :key="'q-' + f.id" class="inflight" :class="{ steered: f.steered }">
+            <MessageItem :entry="f.entry" optimistic />
+            <span v-if="f.steered" class="inflight-tag"><Icon name="steer" :size="11" />已引导到当前回合</span>
+          </div>
           <MessageItem v-if="optimistic" key="__optimistic" :entry="optimistic" optimistic />
           <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="pending ? elapsed : liveElapsed" />
           <Transition name="fade">
@@ -132,6 +160,16 @@ const retry = () => selectSession(state.selected)
     </div>
 
     <form v-if="state.selected" class="composer" @submit.prevent="submit" @paste="onPaste">
+      <TransitionGroup v-if="queued.length" tag="ul" name="list" class="queue-list" aria-label="排队中的消息">
+        <li v-for="(q, i) in queued" :key="q.id" class="queue-row" :title="queueTitle(q)">
+          <Icon name="clock" :size="13" /><span class="queue-pos">{{ i + 1 }}</span>
+          <span class="queue-text">{{ q.text }}</span>
+          <span v-if="q.attachments.length" class="queue-meta"><Icon name="paperclip" :size="11" />{{ q.attachments.length }}</span>
+          <span v-if="q.fallback === 'steer_rejected'" class="queue-meta warn">引导未生效</span>
+          <span v-if="q.user" class="queue-meta">{{ q.user }}</span>
+          <button v-if="canWithdraw(q)" type="button" class="chip-x" :aria-label="`撤回排队消息 ${i + 1}`" title="撤回（尚未发送）" @click="cancelQueued(q.id)"><Icon name="x" :size="12" /></button>
+        </li>
+      </TransitionGroup>
       <TransitionGroup v-if="drafts.length" tag="div" name="list" class="draft-files">
         <span v-for="f in drafts" :key="f.id" class="chip draft">
           <img v-if="f.preview" :src="f.preview" alt=""><Icon v-else name="file" :size="14" />
@@ -141,11 +179,15 @@ const retry = () => selectSession(state.selected)
       </TransitionGroup>
       <div class="composer-box">
         <input ref="fileInput" type="file" multiple hidden @change="onPick">
-        <button type="button" class="btn ghost icon-only" :title="`添加附件（最多 ${MAX_FILES} 个，每个 20 MiB）`" aria-label="添加附件" :disabled="drafts.length >= MAX_FILES" @click="fileInput?.click()"><Icon name="paperclip" /></button>
-        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" placeholder="发送消息…" @input="grow" @keydown="onKey" />
-        <button class="btn primary icon-only send" title="发送" aria-label="发送" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else name="send" /></button>
+        <button type="button" class="btn ghost icon-only" :title="`添加附件（任意类型，最多 ${limits.files} 个，每个 ${fileSize(limits.fileBytes)}）`" aria-label="添加附件" :disabled="drafts.length >= limits.files" @click="fileInput?.click()"><Icon name="paperclip" /></button>
+        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" :placeholder="showMode ? (mode === 'steer' ? '引导当前回合…' : '排队，当前回合结束后发送…') : '发送消息…'" @input="grow" @keydown="onKey" />
+        <div v-if="showMode" class="mode-switch" role="radiogroup" aria-label="发送方式">
+          <button type="button" role="radio" :aria-checked="state.sendMode === 'queue'" :class="{ on: state.sendMode === 'queue' }" title="排队：当前回合结束后自动发送，发送前可撤回" @click="state.sendMode = 'queue'">排队</button>
+          <button type="button" role="radio" :aria-checked="state.sendMode === 'steer'" :class="{ on: state.sendMode === 'steer' }" title="引导：插入正在运行的回合（turn/steer）" @click="state.sendMode = 'steer'">引导</button>
+        </div>
+        <button class="btn primary icon-only send" :title="showMode ? (mode === 'steer' ? '引导' : '排队发送') : '发送'" :aria-label="showMode ? (mode === 'steer' ? '引导' : '排队发送') : '发送'" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else :name="mode === 'steer' ? 'steer' : 'send'" /></button>
       </div>
-      <div class="hint"><span>Enter 发送 · Shift+Enter 换行</span><span>可粘贴或拖入文件 · {{ drafts.length }}/{{ MAX_FILES }}</span></div>
+      <div class="hint"><span>Enter {{ showMode ? (mode === 'steer' ? '引导' : '排队') : '发送' }} · Shift+Enter 换行</span><span>可粘贴或拖入任意文件 · {{ drafts.length }}/{{ limits.files }} · 单个 ≤ {{ fileSize(limits.fileBytes) }}</span></div>
     </form>
     <Transition name="fade">
       <div v-if="dragging" class="drop-overlay"><Icon name="upload" :size="22" /><span>松开以添加附件</span></div>

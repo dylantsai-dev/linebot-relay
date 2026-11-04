@@ -1,9 +1,10 @@
 import { reactive, ref, computed, watch } from 'vue'
-import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread } from './lib/types'
+import { fileSize } from './lib/format'
+import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode } from './lib/types'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
-export const MAX_FILES = 5
-export const MAX_FILE_BYTES = 20 * 1024 * 1024
+// Upload limits come from the server (/api/whoami); these are the fallbacks.
+export const limits = computed(() => ({ files: state.me?.limits?.max_files || 10, fileBytes: state.me?.limits?.max_file_bytes || 50 * 1024 * 1024, totalBytes: state.me?.limits?.max_total_bytes || 100 * 1024 * 1024 }))
 // Browsers normalize dot-only URL segments, even with a single percent encoding.
 export const keyPath = (key: string) => (key === '.' || key === '..' ? key.replace(/\./g, '%252E') : encodeURIComponent(key))
 
@@ -33,6 +34,11 @@ export const state = reactive({
   live: null as LiveTurn | null,
   streaming: false,
   lightbox: null as { src: string; alt: string } | null,
+  /** Relay queue of the selected session (steered / running / queued messages). */
+  queue: [] as QueueEntry[],
+  /** Send mode while a turn is running: 排队 (default) or 引导. */
+  sendMode: 'queue' as SendMode,
+  stopping: false,
 })
 
 /* ---------- toast ---------- */
@@ -96,6 +102,13 @@ export async function login(value: string, remember: boolean) {
   epoch++
   await refreshSessions().catch(e => { state.sessionsError = e.message })
   startPolling()
+  // Reopen the session from the URL (#s=key) so a refresh lands back on the running turn.
+  const linked = hashSession()
+  if (linked && !state.selected && state.sessions.some(s => s.key === linked)) void selectSession(linked)
+}
+function hashSession() { try { return new URLSearchParams(location.hash.slice(1)).get('s') || '' } catch { return '' } }
+function setHashSession(key: string) {
+  try { history.replaceState(history.state, '', key ? `#s=${encodeURIComponent(key)}` : location.pathname + location.search) } catch { /* ignore */ }
 }
 
 export async function loginPassword(username: string, password: string, remember: boolean) {
@@ -121,7 +134,8 @@ export function logout(revoke = true) {
   revokeBlobs()
   clearTokens()
   stopStream()
-  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null })
+  if (state.selected) setHashSession('')
+  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null, queue: [], sendMode: 'queue', stopping: false })
   state.drafts.clear(); state.pending.clear()
   historySig = ''
 }
@@ -154,10 +168,13 @@ export async function refreshSessions() {
 export async function selectSession(key: string) {
   if (state.selected !== key) {
     state.selected = key
+    setHashSession(key)
     state.history = []
     state.threadRunning = false
     state.historyError = ''
     state.live = null
+    state.queue = []
+    state.sendMode = 'queue'
     historySig = ''
     startStream(key)
   }
@@ -180,6 +197,7 @@ export async function refreshHistory(key: string) {
   if (state.selected !== key || own !== epoch) return
   state.historyError = ''
   state.historySource = data.source
+  setQueue(data.queue || [])
   // Polling fallback for the live turn when the stream is not connected.
   if (!state.streaming) setLive(data.running && data.live ? data.live : null)
   else if (!data.running && state.live && Date.now() - streamTouched > 5000) setLive(null)
@@ -212,7 +230,7 @@ export async function deleteSession(key: string) {
   if (state.sessions.some(s => s.key === key) || state.pending.has(key)) await api(`/api/sessions/${keyPath(key)}`, { method: 'DELETE' })
   state.drafts.delete(key)
   discardAttachments(key)
-  if (state.selected === key) { state.selected = ''; state.history = []; state.threadRunning = false; state.live = null; historySig = ''; stopStream() }
+  if (state.selected === key) { setHashSession(''); state.selected = ''; state.history = []; state.threadRunning = false; state.live = null; state.queue = []; historySig = ''; stopStream() }
   await refreshSessions()
 }
 
@@ -222,9 +240,13 @@ export function addFiles(files: Iterable<File>) {
   const key = state.selected
   if (!key) { toast('请先选择会话'); return }
   const entries = [...(state.attachments.get(key) || [])]
+  const { files: maxFiles, fileBytes, totalBytes } = limits.value
+  let total = entries.reduce((sum, e) => sum + e.size, 0)
   for (const file of files) {
-    if (entries.length >= MAX_FILES) { toast(`最多添加 ${MAX_FILES} 个文件`); break }
-    if (file.size > MAX_FILE_BYTES) { toast(`${file.name} 超过 20 MiB`); continue }
+    if (entries.length >= maxFiles) { toast(`最多添加 ${maxFiles} 个文件`); break }
+    if (file.size > fileBytes) { toast(`${file.name} 超过 ${fileSize(fileBytes)}`); continue }
+    if (total + file.size > totalBytes) { toast(`附件总大小超过 ${fileSize(totalBytes)}`); continue }
+    total += file.size
     const image = /^image\/(png|jpeg|gif|webp)$/.test(file.type)
     entries.push({ id: ++fileId, file, name: file.name, size: file.size, mime: file.type, kind: image ? 'image' : 'file', preview: image ? URL.createObjectURL(file) : null })
   }
@@ -258,13 +280,24 @@ export function attachmentBlob(path: string): Promise<string> {
 }
 function revokeBlobs() { for (const job of blobs.values()) job.then(url => URL.revokeObjectURL(url)).catch(() => {}); blobs.clear() }
 
-/* ---------- send ---------- */
-export async function sendMessage(text: string): Promise<boolean> {
+/* ---------- send / queue / stop ---------- */
+let queueSig = ''
+function setQueue(queue: QueueEntry[]) {
+  const sig = JSON.stringify(queue)
+  if (sig === queueSig) return
+  queueSig = sig
+  state.queue = queue
+}
+/**
+ * Messages are accepted asynchronously (202): the relay queues them behind the running turn (排队)
+ * or steers them into it (引导, turn/steer). Progress then arrives over the stream and history.
+ */
+export async function sendMessage(text: string, mode: SendMode = 'queue'): Promise<boolean> {
   const key = state.selected
   const files = state.attachments.get(key) || []
   if (!key || (!text.trim() && !files.length) || state.pending.has(key)) return false
   const own = epoch
-  const body: Record<string, string> = { session: key, message: text }
+  const body: Record<string, string> = { session: key, message: text, mode, async: '1' }
   const draftId = state.drafts.get(key)
   if (draftId) body.codex_session_id = draftId
   let payload: string | FormData = JSON.stringify(body)
@@ -277,10 +310,13 @@ export async function sendMessage(text: string): Promise<boolean> {
   state.attachments.delete(key)
   let restored = false, ok = false
   try {
-    await api('/api/send', { method: 'POST', body: payload })
+    const result = await api<{ status: string; position?: number; steer_fallback?: string }>('/api/send', { method: 'POST', body: payload })
     if (own !== epoch) return true
     state.drafts.delete(key)
     ok = true
+    if (result.status === 'queued') toast(result.steer_fallback ? '无法引导当前回合，已排在队首' : `已排队（第 ${result.position || 1} 位）`, true)
+    else if (result.status === 'steered') toast('已引导到当前回合', true)
+    else if (mode === 'steer' && result.steer_fallback === 'no_active_turn') toast('当前没有运行中的回合，已直接发送', true)
   } catch (error) {
     if (own === epoch) {
       toast((error as Error).message)
@@ -296,6 +332,27 @@ export async function sendMessage(text: string): Promise<boolean> {
     }
   }
   return ok
+}
+/** Remove a queued message before it is sent. */
+export async function cancelQueued(id: string) {
+  const key = state.selected
+  try {
+    await api(`/api/sessions/${keyPath(key)}/queue/${id}`, { method: 'DELETE' })
+    setQueue(state.queue.filter(e => e.id !== id))
+    toast('已撤回', true)
+  } catch (error) { toast((error as Error).message) }
+  void refreshSessions().catch(() => {})
+}
+/** Stop the running turn (turn/interrupt); queued messages then continue. */
+export async function stopTurn() {
+  const key = state.selected
+  if (!key || state.stopping) return
+  state.stopping = true
+  try { await api(`/api/sessions/${keyPath(key)}/interrupt`, { method: 'POST' }); toast('已发送停止请求', true) }
+  catch (error) { toast((error as Error).message) }
+  finally { state.stopping = false }
+  historySig = ''
+  if (state.selected === key) void refreshHistory(key).catch(() => {})
 }
 
 /* ---------- logs ---------- */
@@ -338,15 +395,24 @@ function onStreamEvent(key: string, name: string, data: any) {
   streamTouched = Date.now()
   if (name === 'snapshot') {
     setLive(data.live || null)
+    if (data.queue) setQueue(data.queue)
     if (data.running) state.threadRunning = true
   } else if (name === 'turn') {
-    if (data.status === 'started') { setLive({ turnId: data.turnId || '', startedAt: new Date().toISOString(), items: [] }); state.threadRunning = true }
+    if (data.status === 'started') {
+      setLive({ turnId: data.turnId || '', startedAt: new Date().toISOString(), items: [] }); state.threadRunning = true
+      historySig = ''
+      void refreshHistory(key).catch(() => {})
+    }
     else {
       setLive(null)
       historySig = ''
       void refreshHistory(key).catch(() => {})
       void refreshSessions().catch(() => {})
     }
+  } else if (name === 'queue') {
+    setQueue(data.queue || [])
+    if (data.running) state.threadRunning = true
+    void refreshSessions().catch(() => {})
   } else if (name === 'item') {
     const item = liveItem(data.item.id, data.item)
     Object.assign(item, data.item)

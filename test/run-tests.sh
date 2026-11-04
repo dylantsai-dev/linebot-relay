@@ -161,7 +161,8 @@ async function main() {
   await new Promise(resolve => receiver.stdout.once('data', resolve));
   const callback_url = `http://127.0.0.1:${callbackPort}/result`;
   const accepted = await post({ session: 'callback', message: 'delay:300:callback', callback_url });
-  assert.deepEqual(accepted, { status: 202, body: { accepted: true, session: 'callback' } });
+  assert.equal(accepted.status, 202);
+  assert.equal(accepted.body.accepted, true); assert.equal(accepted.body.session, 'callback'); assert.equal(accepted.body.mode, 'queue'); assert.match(accepted.body.id, /^[0-9a-f-]{36}$/);
   assert.ok(!fs.existsSync(callbackFile), '202 arrives before completion');
   assert.equal((await post({ session: 'callback-error', message: '__error__', callback_url })).status, 202);
   let callbacks = [];

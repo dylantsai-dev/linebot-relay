@@ -141,6 +141,19 @@ function get(route) {
   });
 }
 
+function rawGet(route) {
+  return new Promise((resolve, reject) => {
+    const { Writable } = require('node:stream');
+    let body = '', status, headers;
+    const res = new Writable({ write(chunk, _e, cb) { body += chunk; cb(); } });
+    res.writeHead = (code, h) => { status = code; headers = h; };
+    const end = res.end.bind(res);
+    res.end = (text) => { if (text) body += text; end(); };
+    res.on('finish', () => resolve({ status, headers, body }));
+    handler({ url: route, method: 'GET', headers: {} }, res).catch?.(reject);
+  });
+}
+
 async function main() {
   if (socketMode) await fake.listen(socketPath);
   else fs.writeFileSync(socketPath, 'socket placeholder');
@@ -464,6 +477,110 @@ async function main() {
   assert.equal(client.threadState(seedId).live, null);
   live.close();
   assert.equal(client.liveListeners.size, 0);
+
+  // ----- Queue (排队) / steer (引导) / interrupt / refresh-resume -----
+  const waitFor = async (check, label, tries = 200) => { for (let i = 0; i < tries; i++) { if (await check()) return; await pause(10); } assert.fail(`timed out waiting: ${label}`); };
+  let qThread;
+  fake.handle({ id: 'queue-thread', method: 'thread/start', params: {} }, value => { if (value.result?.thread) qThread = value.result.thread.id; }, () => {});
+  assert.equal((await api('PUT', '/api/sessions/qs', { codex_session_id: qThread })).status, 201);
+  const qStream = stream('/api/sessions/qs/stream');
+  const held = api('POST', '/webhook/queue', { session: 'qs', message: '__hold__one' });
+  await waitFor(() => client.busy(qThread), 'held turn running');
+  const queuedTwo = await api('POST', '/api/send', { session: 'qs', message: 'queued-two', async: '1' });
+  assert.equal(queuedTwo.status, 202, JSON.stringify(queuedTwo));
+  assert.equal(queuedTwo.body.mode, 'queue');
+  assert.equal(queuedTwo.body.status, 'queued');
+  assert.equal(queuedTwo.body.position, 1);
+  const queuedThree = await api('POST', '/webhook', { session: 'qs', message: 'queued-three', callback_url: 'http://127.0.0.1:9/never' });
+  assert.equal(queuedThree.status, 202);
+  let queueView = (await get('/api/sessions/qs/queue')).body;
+  assert.deepEqual(queueView.queue.map(e => [e.text, e.status]), [['__hold__one', 'running'], ['queued-two', 'queued'], ['queued-three', 'queued']]);
+  assert.equal(queueView.running, true);
+  assert.equal((await api('DELETE', `/api/sessions/qs/queue/${queuedThree.body.id}`)).status, 200);
+  assert.equal((await api('DELETE', `/api/sessions/qs/queue/${queuedThree.body.id}`)).status, 404, 'already removed');
+  queueView = (await get('/api/sessions/qs/queue')).body;
+  assert.deepEqual(queueView.queue.map(e => e.text), ['__hold__one', 'queued-two']);
+  assert.ok(qStream.events.some(e => e.name === 'queue' && e.data.queue.length === 3), 'queue changes are pushed to the stream');
+  // Refresh mid-turn: history and a new stream subscriber both carry the running state and the queue.
+  const midHistory = (await get('/api/sessions/qs/history')).body;
+  assert.equal(midHistory.running, true);
+  assert.equal(midHistory.history.at(-1).text, '__hold__one');
+  assert.equal(midHistory.queue.length, 2);
+  const lateJoin = stream('/api/sessions/qs/stream');
+  const snap = lateJoin.events.find(e => e.name === 'snapshot').data;
+  assert.equal(snap.running, true);
+  assert.deepEqual(snap.queue.map(e => e.status), ['running', 'queued']);
+  lateJoin.close();
+  // Steer into the running turn: turn/steer with expectedTurnId, no new turn.
+  const qStartsBefore = fake.requests.filter(r => r.method === "turn/start" && r.params.threadId === qThread).length;
+  const steered = api('POST', '/webhook/steer', { session: 'qs', message: 'steer-in' });
+  await waitFor(() => fake.steered?.some(e => e.text === 'steer-in'), 'turn/steer sent');
+  const steerRequest = fake.requests.find(r => r.method === 'turn/steer');
+  assert.equal(steerRequest.params.threadId, qThread);
+  assert.equal(steerRequest.params.expectedTurnId, fake.turns.get(qThread)[0].id);
+  assert.equal(fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === qThread).length, qStartsBefore);
+  await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.some(e => e.status === 'steered' && e.text === 'steer-in'), 'steered entry listed');
+  fake.held.get(qThread)();
+  assert.equal((await held).body.reply, 'reply:__hold__one');
+  const steerResult = (await steered).body;
+  assert.equal(steerResult.mode, 'steer');
+  assert.equal(steerResult.steered, true);
+  assert.equal(steerResult.reply, 'reply:__hold__one');
+  await waitFor(() => fake.threads.get(qThread).includes('queued-two') && !client.busy(qThread), 'queued message sent after the turn');
+  await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.length === 0, 'queue drained');
+  assert.deepEqual(fake.threads.get(qThread), ['__hold__one', 'queued-two'], 'removed message is never sent');
+  // Steer with nothing running: sent right away as a new turn.
+  const idleSteer = await api('POST', '/webhook', { session: 'qs', message: 'steer-idle', mode: 'steer' });
+  assert.equal(idleSteer.body.reply, 'reply:steer-idle');
+  assert.equal(idleSteer.body.steer, 'no_active_turn');
+  assert.equal((await api('POST', '/webhook', { session: 'qs', message: 'x', mode: 'bogus' })).status, 400);
+  const idleAsync = await api('POST', '/api/send', { session: 'qs', message: 'idle-async', async: '1' });
+  assert.deepEqual([idleAsync.status, idleAsync.body.status, idleAsync.body.position], [202, 'running', 0], 'idle session starts right away');
+  await waitFor(() => fake.threads.get(qThread).includes('idle-async') && !client.busy(qThread), 'idle async send done');
+  await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.length === 0, 'queue drained again');
+  // A queued message waits for a turn started elsewhere (the Codex App) too.
+  fake.handle({ id: 'app-hold', method: 'turn/start', params: { threadId: qThread, input: [{ type: 'text', text: '__hold__app' }] } }, () => {}, () => {});
+  await waitFor(() => client.busy(qThread), 'App turn running');
+  const afterApp = api('POST', '/webhook/queue', { session: 'qs', message: 'after-app' });
+  await pause(80);
+  assert.ok(!fake.threads.get(qThread).includes('after-app'), 'queued behind the App turn');
+  // A rejected steer falls back to the head of the queue.
+  fake.rejectSteer = true;
+  const rejected = await api('POST', '/api/send', { session: 'qs', message: 'steer-rejected', mode: 'steer', async: '1' });
+  fake.rejectSteer = false;
+  assert.equal(rejected.status, 202);
+  assert.equal(rejected.body.steer_fallback, 'steer_rejected');
+  assert.equal(rejected.body.position, 1);
+  // Stop: interrupt the running turn.
+  const stopped = await api('POST', '/api/sessions/qs/interrupt');
+  assert.equal(stopped.status, 200, JSON.stringify(stopped));
+  assert.equal(fake.turns.get(qThread).find(t => t.items[0].content[0].text === '__hold__app').status, 'interrupted');
+  assert.equal((await afterApp).body.reply, 'reply:after-app');
+  assert.deepEqual(fake.threads.get(qThread).slice(-3), ['__hold__app', 'steer-rejected', 'after-app']);
+  await waitFor(() => !client.busy(qThread), 'idle');
+  assert.equal((await api('POST', '/api/sessions/qs/interrupt')).status, 409, 'nothing to stop');
+  const stoppedHistory = (await get('/api/sessions/qs/history')).body.history;
+  assert.ok(stoppedHistory.some(e => e.role === 'error' && e.text === '回合已停止' && e.interrupted), 'stopped turns are marked');
+  // Repeated text: each thread message matches its own relay entry (no duplicate orphan bubbles).
+  const repeated = convert({ id: 'rep', turns: [
+    { startedAt: 1700000000, completedAt: 1700000001, status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'again' }] }, { type: 'agentMessage', text: 'one' }] },
+    { startedAt: 1700000030, completedAt: 1700000031, status: 'interrupted', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'again' }] }] },
+  ] }, [
+    { role: 'user', text: 'again', source: 'webhook', time: new Date(1700000000000).toISOString(), request_id: 'r1' },
+    { role: 'user', text: 'again', source: 'console', time: new Date(1700000030000).toISOString(), request_id: 'r2' },
+    { role: 'error', text: 'Codex turn interrupted', time: new Date(1700000031000).toISOString(), request_id: 'r2' },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(repeated)).map(e => [e.role, e.text, e.source]), [['user', 'again', 'webhook'], ['assistant', 'one', undefined], ['user', 'again', 'console'], ['error', '回合已停止', undefined]]);
+  qStream.close();
+  assert.equal(vm.runInContext('queueListeners.size', relayContext), 0);
+  // Uploaded non-image files get a signed download URL.
+  const fileEntry = (await get('/api/sessions/images/history')).body.history[0].attachments.find(f => f.name === 'notes.txt');
+  assert.match(fileEntry.url, /^\/api\/media\/[^?]+\?.*&t=f&/);
+  const download = await rawGet(fileEntry.url);
+  assert.equal(download.status, 200);
+  assert.equal(download.body, 'inline text');
+  assert.match(download.headers['Content-Disposition'], /^attachment;.*notes\.txt/);
+  assert.equal((await rawGet(fileEntry.url.replace('&t=f', ''))).status, 404, 'download signature cannot serve as an image signature');
 
   // Failure before any turn is sent may use exec, including backoff calls.
   client.close();

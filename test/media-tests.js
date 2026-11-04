@@ -8,6 +8,7 @@ const { Media, rewriteMarkdown, itemImages } = require('../lib/media');
 const { AppServer, summarizeItem } = require('../lib/appserver');
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-media-'));
+(async () => {
 try {
   const root = path.join(temp, 'work', 'k');
   fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
@@ -19,7 +20,7 @@ try {
   const url = media.url(path.join(root, 'sub', 'a.png'), [root], 'k', 7);
   assert.match(url, /^\/api\/media\/a\.png\?p=[\w-]+&k=k&u=7&e=\d+&s=[\w-]{32}$/);
   const verified = media.verify(new URL('http://x' + url).searchParams);
-  assert.deepEqual({ ...verified, file: path.basename(verified.file) }, { file: 'a.png', key: 'k', uid: 7 });
+  assert.deepEqual({ ...verified, file: path.basename(verified.file) }, { file: 'a.png', key: 'k', uid: 7, download: false });
   assert.equal(new Media('secret-two').verify(new URL('http://x' + url).searchParams), null, 'other secret');
   assert.equal(media.url(path.join(root, 'notes.txt'), [root], 'k', 7), null, 'not an image');
   assert.equal(media.url(path.join(root, 'escape.png'), [root], 'k', 7), null, 'symlink escape');
@@ -28,6 +29,27 @@ try {
   assert.equal(media.url('relative/a.png', [root], 'k', 7), null);
   const expired = new URL('http://x' + url).searchParams; expired.set('e', String(Date.now() - 1000));
   assert.equal(media.verify(expired), null, 'expired');
+
+  // Download URLs for any uploaded file type (t=f), bound to their kind and root.
+  const fileUrl = media.fileUrl(path.join(root, 'notes.txt'), root, 'k', 7);
+  assert.match(fileUrl, /^\/api\/media\/notes\.txt\?p=[\w-]+&k=k&u=7&e=\d+&t=f&s=[\w-]{32}$/);
+  assert.equal(media.verify(new URL('http://x' + fileUrl).searchParams).download, true);
+  const forged = new URL('http://x' + fileUrl).searchParams; forged.delete('t');
+  assert.equal(media.verify(forged), null, 'a download signature is not an image signature');
+  assert.equal(media.fileUrl(path.join(root, 'escape.png'), root, 'k', 7), null, 'symlink escape');
+  assert.equal(media.fileUrl(path.join(root, '..', '..', 'outside.png'), root, 'k', 7), null, 'traversal');
+  assert.equal(media.fileUrl(path.join(root, 'sub'), root, 'k', 7), null, 'directories');
+  assert.equal(media.fileUrl(path.join(root, 'notes.txt'), '/', 'k', 7), null, 'shallow root');
+  {
+    const headers = {}; let body = '';
+    const res = new (require('node:stream').Writable)({ write(chunk, _e, cb) { body += chunk; cb(); } });
+    res.writeHead = (status, h) => { headers.status = status; Object.assign(headers, h); };
+    await new Promise(resolve => { res.on('finish', resolve); media.serve({ method: 'GET' }, res, fs.realpathSync(path.join(root, 'notes.txt')), true); });
+    assert.equal(headers.status, 200);
+    assert.equal(headers['Content-Type'], 'application/octet-stream');
+    assert.match(headers['Content-Disposition'], /^attachment;/);
+    assert.equal(body, 'txt');
+  }
 
   const toUrl = raw => raw.startsWith(root) ? `/api/media/x?p=${encodeURIComponent(raw)}` : null;
   const md = rewriteMarkdown(`看图 ![猫](${root}/sub/a.png) 和 [文件](file://${root}/sub/a.png) 以及 ![外](/etc/x.png) [网](https://e.com/a.png)`, toUrl);
@@ -65,3 +87,4 @@ try {
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
+})().catch(error => { console.error(error); process.exitCode = 1; });

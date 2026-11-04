@@ -190,6 +190,14 @@ async function main() {
   assert.equal((await fetch(base + signed)).status, 200);
   assert.equal((await fetch(base + signed, { method: 'HEAD' })).status, 200);
   assert.equal((await call(b, '/api/sessions/s1/stream')).status, 404, 'no stream without a grant');
+  for (const [method, route] of [['GET', '/api/sessions/s1/queue'], ['POST', '/api/sessions/s1/interrupt'], ['DELETE', '/api/sessions/s1/queue/00000000-0000-4000-8000-000000000000']])
+    assert.equal((await call(b, route, { method })).status, 404, `no ${method} ${route} without a grant`);
+  assert.equal((await call(b, '/webhook/steer', { method: 'POST', body: { session: 's1', message: 'sneak' } })).status, 404);
+  assert.equal((await call(b, '/webhook/queue', { method: 'POST', body: { session: 's1', message: 'sneak' } })).status, 404);
+  assert.deepEqual((await call(a, '/api/sessions/s1/queue')).body.queue, []);
+  assert.equal((await call(a, '/api/sessions/s1/queue/00000000-0000-4000-8000-000000000000', { method: 'DELETE' })).status, 404);
+  assert.equal((await call(a, '/api/sessions/s1/interrupt', { method: 'POST' })).status, 503, 'stop needs the app-server');
+  assert.deepEqual(Object.keys((await call(a, '/api/whoami')).body.limits).sort(), ['max_file_bytes', 'max_files', 'max_total_bytes']);
 
   // Live stream over real HTTP: SSE headers, snapshot, heartbeat.
   const controller = new AbortController();

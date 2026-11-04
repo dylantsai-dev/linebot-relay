@@ -259,6 +259,21 @@ button.chip:hover:not(:disabled) { background: var(--bg-hover); }
 .composer textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: transparent; min-height: 30px; max-height: 220px; padding: 5px 4px; line-height: 20px; font-size: 14px; }
 .composer .send { border-radius: 7px; }
 .hint { display: flex; justify-content: space-between; margin-top: 6px; padding: 0 4px; font-size: 11px; color: var(--faint); }
+.queue-list { list-style: none; margin: 0 0 8px; padding: 4px; display: flex; flex-direction: column; gap: 2px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--bg-subtle); max-height: 148px; overflow: auto; }
+.queue-row { display: flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 4px 0 8px; border-radius: 6px; color: var(--muted); font-size: 12.5px; }
+.queue-row:hover { background: var(--bg-hover); }
+.queue-pos { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.queue-text { flex: 1; min-width: 0; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue-meta { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.queue-meta.warn { color: var(--red); }
+.mode-switch { display: inline-flex; align-self: center; flex: none; padding: 2px; gap: 2px; border-radius: 7px; background: var(--bg-muted); }
+.mode-switch button { height: 24px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color .12s, color .12s; }
+.mode-switch button.on { background: var(--bg); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 0 0 1px var(--line-strong); }
+.stop-btn { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); }
+.stop-btn:hover:not(:disabled) { background: var(--red-soft); }
+.inflight { position: relative; }
+.inflight-tag { display: inline-flex; align-items: center; gap: 4px; margin: -6px 0 8px 32px; font-size: 11px; color: var(--accent); }
+a.chip { text-decoration: none; color: inherit; }
 .drop-overlay { position: absolute; inset: 8px; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1.5px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--bg) 88%, transparent); color: var(--accent); font-weight: 500; pointer-events: none; }
 
 /* menu */
