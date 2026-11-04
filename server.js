@@ -631,7 +631,8 @@ function cancelQueued(key, id, principal) {
 }
 async function interruptSession(key) {
   const id = sessions[key]?.codex_session_id;
-  if (!appserver || !id || !fs.existsSync(appserverSocket)) throw failure('Codex app-server 未连接，无法停止', 503);
+  if (!id) throw failure('会话不存在或未关联 Codex 会话', 404);
+  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('Codex app-server 未连接，无法停止', 503);
   await appserver.connect();
   const turnId = appserver.activeTurnId(id) || await appserver.refreshActive(id);
   if (!turnId) throw failure('当前没有正在运行的回合', 409);

@@ -559,6 +559,7 @@ async function main() {
   assert.deepEqual(fake.threads.get(qThread).slice(-3), ['__hold__app', 'steer-rejected', 'after-app']);
   await waitFor(() => !client.busy(qThread), 'idle');
   assert.equal((await api('POST', '/api/sessions/qs/interrupt')).status, 409, 'nothing to stop');
+  assert.equal((await api('POST', '/api/sessions/never-linked/interrupt')).status, 404, 'unknown session');
   const stoppedHistory = (await get('/api/sessions/qs/history')).body.history;
   assert.ok(stoppedHistory.some(e => e.role === 'error' && e.text === '回合已停止' && e.interrupted), 'stopped turns are marked');
   // Repeated text: each thread message matches its own relay entry (no duplicate orphan bubbles).
