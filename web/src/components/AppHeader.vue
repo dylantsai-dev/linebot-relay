@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BrandMark from './BrandMark.vue'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { state, logout, isDark, toggleTheme, refreshLogs, isAdmin, refreshUsers, changeOwnPassword, toast } from '../store'
 import Icon from './Icon.vue'
@@ -28,7 +29,7 @@ async function savePassword() {
 </script>
 <template>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark"><Icon name="logo" :size="14" /></span><span class="brand-name">Codex Relay</span></div>
+    <div class="brand"><BrandMark :size="22" /><span class="brand-name">Codex Relay</span></div>
     <nav class="tabs" aria-label="主导航">
       <button v-for="[id, label] in tabs" :key="id" class="tab" :class="{ active: state.tab === id }" :aria-current="state.tab === id ? 'page' : undefined" @click="go(id)">{{ label }}</button>
     </nav>

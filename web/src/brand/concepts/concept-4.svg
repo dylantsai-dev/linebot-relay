@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><style>
+  .rm-tile{fill:#0b0b0c} .rm-g{fill:none;stroke:#fff} .rm-gf{fill:#fff} .rm-a{fill:none;stroke:#6e8cff} .rm-af{fill:#6e8cff}
+  .rm-g,.rm-a{stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round} .rm-cut{stroke:#0b0b0c;stroke-width:2;paint-order:stroke}
+  @media (prefers-color-scheme: dark){ .rm-tile{fill:#ededef} .rm-g{stroke:#0b0b0c} .rm-gf{fill:#0b0b0c} .rm-a{stroke:#3e63dd} .rm-af{fill:#3e63dd} .rm-cut{stroke:#ededef} }
+</style><rect class="rm-tile" width="32" height="32" rx="7.5"/>
+  <path class="rm-g" d="M10 25.5V6.5h7a5.25 5.25 0 0 1 0 10.5h-7"/>
+  <path class="rm-a" d="m15.5 17 7.5 8.5"/>
+  <path class="rm-a" d="M23 19.5v6h-6"/>
+</svg>

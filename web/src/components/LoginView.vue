@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BrandMark from './BrandMark.vue'
 import { ref, onMounted, nextTick } from 'vue'
 import { login, loginPassword, isDark, toggleTheme } from '../store'
 import Icon from './Icon.vue'
@@ -29,7 +30,7 @@ async function submit() {
   <div class="login">
     <button class="btn ghost icon-only login-theme" :title="isDark ? '浅色模式' : '深色模式'" aria-label="切换深浅主题" @click="toggleTheme"><Icon :name="isDark ? 'sun' : 'moon'" /></button>
     <form class="login-card" @submit.prevent="submit">
-      <div class="login-mark"><Icon name="logo" :size="20" /></div>
+      <BrandMark class="login-mark" :size="36" />
       <h1>Codex Relay</h1>
       <p class="login-sub">{{ mode === 'password' ? '使用账号登录控制台' : '使用访问令牌（WEBHOOK_TOKEN）登录' }}</p>
       <p v-if="needsSetup && mode === 'token'" class="login-note"><Icon name="shield" :size="13" />尚未创建管理员。请先用访问令牌登录，再创建管理员账号。</p>

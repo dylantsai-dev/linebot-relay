@@ -112,6 +112,10 @@ app-server 可用時，歷史來自 `thread/read {threadId, includeTurns:true}`�
 
 請求紀錄存於 `DATA_DIR/requests.jsonl`，記憶體保留最新 500 筆，啟動時恢復；檔案超過 2200 行時縮減至最新 2000 行。僅記錄 `/webhook` 與 `/api/send`，包含驗證失敗；不記錄訊息本文或 Authorization，錯誤文字最多 200 字元。非同步 webhook 在工作完成／失敗時記一次結果，202 受理及回呼傳送本身不重複計入；進行中的呼叫尚未計入今日統計。台北日期的累計另存 `DATA_DIR/stats.json`，避免記憶體上限與重新啟動影響今日總計。原有 `LOG_DIR/relay.log` 與 `/sessions` 格式保持不變。
 
+### 圖示
+
+應用圖示的唯一來源是 `web/src/brand/mark.svg`：控制台左上角與登入頁的 logo 直接內嵌它（跟隨控制台深淺色主題），Vite 也會把它輸出為 `/console/favicon.svg`（內建 `prefers-color-scheme` 深色版）。更換圖示時替換這個檔案（備選方案在 `web/src/brand/concepts/concept-1..4.svg`，可直接複製覆蓋），再執行 `python3 web/scripts/render-icons.py` 重新產生 `web/public/favicon-32.png` 與 `apple-touch-icon.png`。SVG 請沿用 `rm-tile`／`rm-g`／`rm-gf`／`rm-a`／`rm-af` class。
+
 ## 使用者管理
 
 控制台內建以 SQLite 儲存的帳號系統，管理員可以指定每個使用者能看到哪些會話。

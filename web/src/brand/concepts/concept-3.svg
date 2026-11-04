@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><style>
+  .rm-tile{fill:#0b0b0c} .rm-g{fill:none;stroke:#fff} .rm-gf{fill:#fff} .rm-a{fill:none;stroke:#6e8cff} .rm-af{fill:#6e8cff}
+  .rm-g,.rm-a{stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round} .rm-cut{stroke:#0b0b0c;stroke-width:2;paint-order:stroke}
+  @media (prefers-color-scheme: dark){ .rm-tile{fill:#ededef} .rm-g{stroke:#0b0b0c} .rm-gf{fill:#0b0b0c} .rm-a{stroke:#3e63dd} .rm-af{fill:#3e63dd} .rm-cut{stroke:#ededef} }
+</style><rect class="rm-tile" width="32" height="32" rx="7.5"/>
+  <path class="rm-a" d="M8 19.5C9.5 9 22.5 9 24 19.5"/>
+  <path class="rm-a" d="m20.6 17.6 3.4 2.4 1.9-3.7"/>
+  <circle class="rm-gf" cx="7.5" cy="23.5" r="3"/>
+  <circle class="rm-gf" cx="24.5" cy="23.5" r="3"/>
+</svg>
