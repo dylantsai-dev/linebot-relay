@@ -7,6 +7,8 @@ import SessionsView from './components/SessionsView.vue'
 import LogsView from './components/LogsView.vue'
 import DocsView from './components/DocsView.vue'
 import ToastBar from './components/ToastBar.vue'
+import UsersView from './components/UsersView.vue'
+import SetupBanner from './components/SetupBanner.vue'
 onMounted(restoreLogin)
 </script>
 <template>
@@ -14,10 +16,12 @@ onMounted(restoreLogin)
   <LoginView v-else-if="!state.authed" />
   <div v-else class="shell">
     <AppHeader />
+    <SetupBanner />
     <main class="main">
       <SessionsView v-show="state.tab === 'sessions'" />
       <LogsView v-if="state.tab === 'logs'" />
       <DocsView v-if="state.tab === 'docs'" />
+      <UsersView v-if="state.tab === 'users' && state.me?.role === 'admin'" />
     </main>
   </div>
   <ToastBar />

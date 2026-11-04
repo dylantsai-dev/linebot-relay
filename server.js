@@ -8,6 +8,7 @@ const path = require('node:path');
 const { URL } = require('node:url');
 const { AppServer } = require('./lib/appserver');
 const { readRequest, prepareAttachments, parseUserContent, serveFile } = require('./lib/attachments');
+const { Users } = require('./lib/users');
 
 function positiveInteger(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -42,6 +43,14 @@ try {
   if (error.code !== 'ENOENT') throw error;
 }
 const authHash = crypto.createHash('sha256').update(`Bearer ${process.env.WEBHOOK_TOKEN}`).digest();
+const users = new Users(path.resolve(process.env.USERS_DB || path.join(config.data, 'users.db')));
+// Optional first-admin seed; ignored once any admin exists.
+async function seedAdmin() {
+  const username = process.env.ADMIN_USERNAME, password = process.env.ADMIN_PASSWORD;
+  if (!username || !password || users.hasAdmin()) return;
+  try { await users.create({ username, password, role: 'admin' }); console.log(`Seeded admin user ${username}`); }
+  catch (error) { console.error('Admin seed failed:', error.message); }
+}
 const queues = new Map();
 const historyDir = path.join(config.data, 'history');
 fs.mkdirSync(historyDir, { recursive: true });
@@ -387,6 +396,86 @@ function enqueue(body, source, requestId) {
   return job;
 }
 
+// ----- authentication & per-session authorization -----
+// WEBHOOK_TOKEN is the super-admin key (webhook integrations, bootstrap); users log in for an rs_ token.
+function authenticate(req) {
+  const header = req.headers.authorization || '';
+  if (crypto.timingSafeEqual(crypto.createHash('sha256').update(header).digest(), authHash)) return { kind: 'token', admin: true, user: null };
+  const match = /^Bearer (rs_[A-Za-z0-9_-]{20,96})$/.exec(header);
+  const found = match && users.authenticate(match[1]);
+  return found ? { kind: 'user', admin: found.user.role === 'admin', user: found.user, tokenHash: found.tokenHash } : null;
+}
+function canSee(principal, key) { return principal.admin || users.isGranted(principal.user.id, key); }
+function canCreate(principal) { return principal.admin || principal.user.can_create; }
+function sessionKnown(key) { return !!sessions[key] || live.has(key) || fs.existsSync(path.join(historyDir, `${safeKey(key)}.jsonl`)) || users.anyGrant(key); }
+function visibleKeys(principal) { return principal.admin ? null : new Set(users.grants(principal.user.id)); }
+// Ungranted sessions are reported as missing so their existence does not leak.
+function authorizeSend(principal, body) {
+  if (principal.admin) return;
+  if (body.codex_session_id !== undefined) throw failure('仅管理员可以绑定 Codex ID', 403);
+  if (users.isGranted(principal.user.id, body.session)) return;
+  if (sessionKnown(body.session)) throw failure('Session not found', 404);
+  if (!principal.user.can_create) throw failure('无权新建会话', 403);
+  users.grant(principal.user.id, body.session);
+}
+function fileVisible(principal, rawPath) {
+  if (principal.admin) return true;
+  try {
+    const relative = path.relative(fs.realpathSync(config.uploads), fs.realpathSync(rawPath));
+    const top = relative.split(path.sep)[0];
+    return !!top && top !== '..' && !path.isAbsolute(relative) && users.grants(principal.user.id).some(key => safeKey(key) === top);
+  } catch { return false; }
+}
+function readJson(req, limit = 65536) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0, done = false;
+    req.on('data', chunk => {
+      if (done) return;
+      size += chunk.length;
+      if (size > limit) { done = true; reject(failure('Payload too large', 413)); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (done) return; done = true;
+      try { const text = Buffer.concat(chunks).toString('utf8'); resolve(text ? JSON.parse(text) : {}); }
+      catch { reject(failure('Invalid JSON', 400)); }
+    });
+    req.on('error', error => { if (!done) { done = true; reject(error); } });
+  });
+}
+function principalInfo(principal) {
+  return { ok: true, auth: principal.kind, role: principal.admin ? 'admin' : 'user', can_create: canCreate(principal),
+    user: principal.user ? { id: principal.user.id, username: principal.user.username, role: principal.user.role, can_create: principal.user.can_create, last_login_at: principal.user.last_login_at } : null,
+    needs_setup: !users.hasAdmin() };
+}
+async function handleUsers(req, res, route, principal) {
+  if (!principal.admin) throw failure('Forbidden', 403);
+  if (route === '/api/users') {
+    if (req.method === 'GET') { send(res, 200, { users: users.list() }); return; }
+    if (req.method === 'POST') {
+      const input = await readJson(req);
+      send(res, 201, { user: await users.create({ username: input.username, password: input.password, role: input.role || 'user', can_create: !!input.can_create, disabled: !!input.disabled, sessions: input.sessions || [] }) }); return;
+    }
+  }
+  const match = route.match(/^\/api\/users\/(\d{1,12})(\/sessions|\/password)?$/);
+  if (!match) throw failure('Not found', 404);
+  const id = Number(match[1]), self = principal.user?.id === id;
+  if (!match[2]) {
+    if (req.method === 'GET') { const user = users.get(id); if (!user) throw failure('User not found', 404); send(res, 200, { user }); return; }
+    if (req.method === 'PATCH') {
+      const input = await readJson(req);
+      if (self && ((input.role !== undefined && input.role !== 'admin') || input.disabled === true)) throw failure('不能降级或停用自己', 409);
+      const user = users.update(id, { username: input.username, role: input.role, disabled: input.disabled, can_create: input.can_create });
+      if (Array.isArray(input.sessions)) user.sessions = users.setGrants(id, input.sessions);
+      send(res, 200, { user }); return;
+    }
+    if (req.method === 'DELETE') { if (self) throw failure('不能删除自己', 409); users.remove(id); send(res, 200, { ok: true }); return; }
+  }
+  if (match[2] === '/sessions' && req.method === 'PUT') { const input = await readJson(req, 1024 * 1024); send(res, 200, { sessions: users.setGrants(id, input.sessions) }); return; }
+  if (match[2] === '/password' && req.method === 'POST') { const input = await readJson(req); await users.setPassword(id, input.password, self ? principal.tokenHash : null); send(res, 200, { ok: true }); return; }
+  throw failure('Not found', 404);
+}
+
 function send(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
@@ -453,20 +542,59 @@ const server = http.createServer(async (req, res) => {
     if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console' || route.startsWith('/console/'))) { serveConsole(req, res, route); return; }
     if (req.method === 'GET' && route === '/health') { send(res, 200, { ok: true }); record(200); return; }
     if (!(req.method === 'GET' && route === '/sessions') && !(req.method === 'POST' && route === '/webhook') && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
-    const supplied = crypto.createHash('sha256').update(req.headers.authorization || '').digest();
-    if (!crypto.timingSafeEqual(supplied, authHash)) { send(res, 401, { error: 'Unauthorized' }); record(401); return; }
+    if (req.method === 'GET' && route === '/api/auth/status') { send(res, 200, { needs_setup: !users.hasAdmin() }); return; }
+    if (req.method === 'POST' && route === '/api/auth/login') {
+      const input = await readJson(req);
+      send(res, 200, await users.login(input.username, input.password)); return;
+    }
+    const principal = authenticate(req);
+    if (!principal) { send(res, 401, { error: 'Unauthorized' }); record(401); return; }
+    const visible = visibleKeys(principal);
     if (route === '/sessions') {
       const listing = await sessionListing();
-      send(res, 200, { sessions: Object.fromEntries(listing.filter(s => sessions[s.key]).map(({ key, status, queued, ...entry }) => [key, entry])) }); record(200); return;
+      send(res, 200, { sessions: Object.fromEntries(listing.filter(s => sessions[s.key] && (!visible || visible.has(s.key))).map(({ key, status, queued, ...entry }) => [key, entry])) }); record(200); return;
     }
     if (route.startsWith('/api/') && route !== '/api/send') {
-      if (req.method === 'GET' && route === '/api/files') { serveFile(req, res, url.searchParams.get('path'), config.uploads); return; }
-      if (req.method === 'GET' && route === '/api/whoami') { send(res, 200, { ok: true }); return; }
+      if (req.method === 'GET' && route === '/api/files') {
+        if (!fileVisible(principal, url.searchParams.get('path'))) throw failure('File not found', 404);
+        serveFile(req, res, url.searchParams.get('path'), config.uploads); return;
+      }
+      if (req.method === 'GET' && route === '/api/whoami') { send(res, 200, principalInfo(principal)); return; }
+      if (req.method === 'POST' && route === '/api/auth/logout') { if (principal.tokenHash) users.revoke(principal.tokenHash); send(res, 200, { ok: true }); return; }
+      if (req.method === 'POST' && route === '/api/auth/password') {
+        if (!principal.user) throw failure('访问令牌登录无法修改密码', 400);
+        const input = await readJson(req);
+        if (!await users.checkOwnPassword(principal.user.id, input.current_password)) throw failure('当前密码不正确', 400);
+        await users.setPassword(principal.user.id, input.new_password, principal.tokenHash);
+        send(res, 200, { ok: true }); return;
+      }
+      if (req.method === 'POST' && route === '/api/auth/setup') {
+        if (principal.kind !== 'token') throw failure('Forbidden', 403);
+        if (users.hasAdmin()) throw failure('管理员已存在', 409);
+        const input = await readJson(req);
+        const user = await users.create({ username: input.username, password: input.password, role: 'admin' });
+        send(res, 201, { ...users.issue(user.id), user }); return;
+      }
+      // Full webhook token for building curl snippets; admins only.
+      if (req.method === 'GET' && route === '/api/webhook-token') {
+        if (!principal.admin) throw failure('Forbidden', 403);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ token: process.env.WEBHOOK_TOKEN })); return;
+      }
+      if (route === '/api/users' || route.startsWith('/api/users/')) { await handleUsers(req, res, route, principal); return; }
       if (req.method === 'GET' && route === '/api/sessions') {
         const listing = await sessionListing();
-        send(res, 200, { sessions: listing }); return;
+        send(res, 200, { sessions: visible ? listing.filter(s => visible.has(s.key)) : listing }); return;
       }
-      if (req.method === 'GET' && route === '/api/requests') { send(res, 200, { requests: recentRequests.slice(-limitOf(url, 100, 500)).reverse() }); return; }
+      if (req.method === 'GET' && route === '/api/requests') {
+        const entries = visible ? recentRequests.filter(entry => visible.has(entry.session)) : recentRequests;
+        send(res, 200, { requests: entries.slice(-limitOf(url, 100, 500)).reverse() }); return;
+      }
+      if (req.method === 'GET' && route === '/api/stats' && visible) {
+        const day = taipeiDay(Date.now()), mine = recentRequests.filter(entry => visible.has(entry.session) && taipeiDay(entry.time) === day);
+        const total = mine.reduce((sum, entry) => sum + (entry.duration_ms || 0), 0), states = [...live].filter(([key]) => visible.has(key)).map(([, state]) => state);
+        send(res, 200, { today: { calls: mine.length, failures: mine.filter(entry => !entry.ok).length, avg_duration_ms: mine.length ? Math.round(total / mine.length) : 0 }, total_sessions: [...visible].filter(key => sessions[key]).length, running: states.filter(state => state.running).length, queued: states.reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000), scope: 'granted' }); return;
+      }
       if (req.method === 'GET' && route === '/api/stats') {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
@@ -481,11 +609,13 @@ const server = http.createServer(async (req, res) => {
         } catch { throw failure('Invalid session', 400); }
         if (!validKey(key)) throw failure('Invalid session', 400);
         const file = path.join(historyDir, `${safeKey(key)}.jsonl`);
+        if (!canSee(principal, key)) throw failure('Session not found', 404);
         if (req.method === 'GET' && match[2]) { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550))); return; }
         if (req.method === 'DELETE' && !match[2]) {
+          if (!canCreate(principal)) throw failure('无权删除会话', 403);
           if (live.has(key)) throw failure('Session is running or queued', 409);
           if (!sessions[key] && !fs.existsSync(file)) throw failure('Session not found', 404);
-          delete sessions[key]; persist();
+          delete sessions[key]; persist(); users.forgetSession(key);
           try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
           send(res, 200, { ok: true }); return;
         }
@@ -497,6 +627,7 @@ const server = http.createServer(async (req, res) => {
     body = parsed.body;
     if (body && typeof body === 'object') body._fileCount = parsed.files.length;
     validate(body);
+    authorizeSend(principal, body);
     if (!body.message?.trim()) body.message = '请查看附件。';
     const prepared = await prepareAttachments(body, parsed.files, config, safeKey);
     body.attachments = prepared.attachments;
@@ -531,13 +662,14 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.requestTimeout = 0;
-server.listen(config.port, config.host, () => console.log(`linebot-relay listening on ${config.host}:${config.port}`));
+seedAdmin().finally(() => server.listen(config.port, config.host, () => console.log(`linebot-relay listening on ${config.host}:${config.port} (users: ${users.driver})`)));
 
 function shutdown() {
   watcherStopped = true;
   clearTimeout(watcherTimer);
   appserver?.close();
   server.close();
+  users.close();
   setTimeout(() => process.exit(0), 1500).unref();
 }
 process.once?.('SIGTERM', shutdown);

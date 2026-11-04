@@ -69,7 +69,7 @@ function simulatedSpawn(bin, args, options) {
 function load() {
   const context = vm.createContext({
     __dirname: path.resolve(__dirname, '..'),
-    require: name => name === 'node:http' ? { createServer: callback => { handler = callback; return { listen() {} }; } } : name === 'node:child_process' ? { spawn: simulatedSpawn } : name === './lib/appserver' ? require('../lib/appserver') : name === './lib/attachments' ? require('../lib/attachments') : require(name),
+    require: name => name === 'node:http' ? { createServer: callback => { handler = callback; return { listen() {} }; } } : name === 'node:child_process' ? { spawn: simulatedSpawn } : name === './lib/appserver' ? require('../lib/appserver') : name === './lib/attachments' ? require('../lib/attachments') : name === './lib/users' ? require('../lib/users') : require(name),
     process: { env: process.env, exit: process.exit, kill: pid => children.get(-pid)?.close(null) }, Buffer, setTimeout, clearTimeout, AbortSignal,
     console: { log() {}, error: console.error },
     fetch: async (url, options) => { callbacks.push(JSON.parse(options.body)); return { ok: true }; },
@@ -118,6 +118,7 @@ async function main() {
     assert.equal(result.body.error, 'Unauthorized');
   }
   assert.equal((await request('/api/whoami')).body.ok, true);
+  assert.equal((await request('/api/whoami')).body.auth, 'token');
   const consoleReply = await request('/api/send', { session: 'console:key', message: '<script>alert(1)</script>' });
   assert.equal(consoleReply.status, 200);
   const localHistory = (await request('/api/sessions/console%3Akey/history?limit=200')).body;

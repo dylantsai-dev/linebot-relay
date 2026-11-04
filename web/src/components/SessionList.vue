@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { state, allSessions, selectSession, refreshSessions } from '../store'
+import { state, allSessions, selectSession, refreshSessions, canCreate } from '../store'
 import { shortTime, time } from '../lib/format'
 import { copy } from '../lib/clipboard'
 import Icon from './Icon.vue'
@@ -36,9 +36,9 @@ const retry = () => refreshSessions().catch(e => (state.sessionsError = e.messag
         <kbd v-if="!query" class="kbd">/</kbd>
       </label>
     </div>
-    <div class="sidebar-actions">
+    <div class="sidebar-actions" :class="{ single: !canCreate }">
       <button class="btn sm" title="复制 Webhook" aria-haspopup="menu" :aria-expanded="!!menuAnchor && menuKey === state.selected" @click="openMenu($event, state.selected)"><Icon name="copy" :size="13" />复制 Webhook</button>
-      <button class="btn sm primary" title="新建会话" @click="emit('create')"><Icon name="plus" :size="13" />新建</button>
+      <button v-if="canCreate" class="btn sm primary" title="新建会话" @click="emit('create')"><Icon name="plus" :size="13" />新建</button>
     </div>
     <div class="list-head"><span>会话</span><span class="count">{{ visible.length }}</span></div>
     <div class="session-list">
@@ -71,8 +71,8 @@ const retry = () => refreshSessions().catch(e => (state.sessionsError = e.messag
       </TransitionGroup>
       <div v-if="state.sessionsLoaded && !visible.length" class="state-box">
         <Icon name="chat" :size="18" />
-        <span>{{ allSessions.length ? '没有匹配的会话' : '还没有会话' }}</span>
-        <button v-if="!allSessions.length" class="btn sm" @click="emit('create')">新建会话</button>
+        <span>{{ allSessions.length ? '没有匹配的会话' : canCreate ? '还没有会话' : '还没有分配给你的会话' }}</span>
+        <button v-if="!allSessions.length && canCreate" class="btn sm" @click="emit('create')">新建会话</button>
       </div>
     </div>
     <CopyMenu :anchor="menuAnchor" :session-key="menuKey" @close="closeMenu" />

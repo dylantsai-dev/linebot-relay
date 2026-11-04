@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { state } from '../store'
+import { isAdmin, webhookToken, toast } from '../store'
 import { copy } from '../lib/clipboard'
 import { webhookUrl, webhookCurl } from '../lib/curl'
 import Icon from './Icon.vue'
@@ -15,17 +15,22 @@ const items = () => [
   { label: 'curl（JSON）', hint: '$TOKEN', icon: 'terminal', disabled: !props.sessionKey, value: () => webhookCurl(props.sessionKey) },
   { label: 'curl（文件）', hint: 'multipart', icon: 'paperclip', disabled: !props.sessionKey, value: () => webhookCurl(props.sessionKey, 'file') },
   // The only option that ever puts the real token on the clipboard.
-  { label: 'curl（含 Token）', hint: '真实密钥', icon: 'key', disabled: !props.sessionKey, danger: true, value: () => webhookCurl(props.sessionKey, 'json', state.token) },
-]
+  // Admins only: non-admin accounts never receive the WEBHOOK_TOKEN.
+  ...(isAdmin.value ? [{ label: 'curl（含 Token）', hint: '真实密钥', icon: 'key', disabled: !props.sessionKey, danger: true, value: async () => webhookCurl(props.sessionKey, 'json', (await webhookToken()) || undefined) }] : []),
+] as { label: string; hint: string; icon: string; disabled: boolean; danger?: boolean; value: () => string | Promise<string> }[]
 
 function place() {
   if (!props.anchor || !menu.value) return
   const rect = props.anchor.getBoundingClientRect(), m = menu.value
   pos.value = { left: Math.max(8, Math.min(rect.left, innerWidth - m.offsetWidth - 8)), top: Math.min(rect.bottom + 4, innerHeight - m.offsetHeight - 8) }
 }
-watch(() => props.anchor, async a => { if (!a) return; await nextTick(); place(); menu.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus() }, { immediate: true })
+watch(() => props.anchor, async a => { if (!a) return; if (isAdmin.value) void webhookToken().catch(() => {}); await nextTick(); place(); menu.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus() }, { immediate: true })
 
-function pick(item: ReturnType<typeof items>[number]) { const text = item.value(); emit('close', true); void copy(text, item.danger ? '已复制（含真实 Token，注意保密）' : '已复制') }
+async function pick(item: ReturnType<typeof items>[number]) {
+  emit('close', true)
+  try { await copy(await item.value(), item.danger ? '已复制（含真实 Token，注意保密）' : '已复制') }
+  catch (e) { toast((e as Error).message) }
+}
 function onKey(e: KeyboardEvent) {
   const buttons = [...(menu.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || [])]
   if (e.key === 'Escape') { e.preventDefault(); emit('close', true) }

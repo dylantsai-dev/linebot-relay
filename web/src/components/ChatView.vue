@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, MAX_FILES } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, MAX_FILES, canCreate } from '../store'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
 import { fileSize } from '../lib/format'
@@ -87,7 +87,7 @@ const retry = () => selectSession(state.selected)
         <span class="spacer" />
         <Transition name="fade"><span v-if="running" class="status-pill"><span class="dot running" />运行中</span></Transition>
         <span v-if="state.historySource === 'local'" class="src-pill" title="Codex App 未连接，显示中继本地记录">本地记录</span>
-        <button class="btn ghost icon-only" title="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
+        <button v-if="canCreate" class="btn ghost icon-only" title="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
       </template>
       <span v-else class="chat-title placeholder">未选择会话</span>
     </div>

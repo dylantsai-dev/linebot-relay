@@ -90,7 +90,7 @@ npm run build      # 輸出 web/dist，server.js 會自動在 /console 提供
 
 `web/dist/` 與 `web/node_modules/` 不納入版本控制。
 
-使用相同的 `WEBHOOK_TOKEN` 登入，透過 `/api/whoami` 驗證。未勾選「记住我」時 Token 存於 sessionStorage；勾選時存於 localStorage，登出會清除兩者。HTML 本身不含 Token，回應帶有 `Cache-Control: no-store` 及限制同源連線、禁止嵌入的 CSP。
+使用帳號密碼登入（見「使用者管理」），或點「使用访问令牌登录」以 `WEBHOOK_TOKEN` 登入，透過 `/api/whoami` 驗證。未勾選「记住我」時 Token 存於 sessionStorage；勾選時存於 localStorage，登出會清除兩者。HTML 本身不含 Token，回應帶有 `Cache-Control: no-store` 及限制同源連線、禁止嵌入的 CSP。
 
 「会话」可搜尋、新建、綁定 Codex ID、查看歷史與傳送訊息；新建會話先在瀏覽器選取，首次送出時才建立服務端資料。Enter 或 Cmd/Ctrl+Enter 傳送，Shift+Enter 換行。顯示執行中、排隊數、台北時間與耗時，支援安全的簡易 Markdown（粗體、行內程式碼及程式碼區塊）。會話清單每 5 秒更新；選取的會話歷史每 3 秒更新（分頁隱藏時暫停），包含 Codex App 中輸入的訊息（標示 App）與執行中提示，並保留捲動位置。「日志统计」顯示台北日曆日的呼叫與失敗統計、平均耗時及近期請求，可停用自動更新。「调用说明」提供可複製的 curl 範例。
 
@@ -111,6 +111,43 @@ app-server 可用時，歷史來自 `thread/read {threadId, includeTurns:true}`�
 本機歷史保存於 `DATA_DIR/history/<safe-key>.jsonl`，與工作目錄使用相同的 key 映射（包括安全轉碼 `.`／`..`）。每輪開始執行時記錄完整使用者訊息、來源（webhook/console）、時間及 request ID，完成時記錄回覆或錯誤、耗時及 Codex ID。超過 550 行時保留最新 500 行；歷史不含修改前已有的舊對話。
 
 請求紀錄存於 `DATA_DIR/requests.jsonl`，記憶體保留最新 500 筆，啟動時恢復；檔案超過 2200 行時縮減至最新 2000 行。僅記錄 `/webhook` 與 `/api/send`，包含驗證失敗；不記錄訊息本文或 Authorization，錯誤文字最多 200 字元。非同步 webhook 在工作完成／失敗時記一次結果，202 受理及回呼傳送本身不重複計入；進行中的呼叫尚未計入今日統計。台北日期的累計另存 `DATA_DIR/stats.json`，避免記憶體上限與重新啟動影響今日總計。原有 `LOG_DIR/relay.log` 與 `/sessions` 格式保持不變。
+
+## 使用者管理
+
+控制台內建以 SQLite 儲存的帳號系統，管理員可以指定每個使用者能看到哪些會話。
+
+- **資料庫**：`DATA_DIR/users.db`（可用 `USERS_DB` 覆寫），檔案權限 600，已被 `.gitignore` 的 `data/` 排除。
+- **驅動**：Node ≥ 22.5 使用內建 `node:sqlite`，不需任何 npm 套件；Node 20 改用 `optionalDependencies` 中的 `better-sqlite3`（部署時執行 `npm ci --omit=dev` 或 `npm install --omit=dev`，需要能下載預編譯檔或有 build toolchain）。可用 `SQLITE_DRIVER=node|better-sqlite3` 強制指定，啟動日誌會印出 `users: <driver>`。
+- **密碼**：scrypt（N=16384, r=8, p=1, 16 位元組 salt）；登入 Token 為隨機 256-bit，資料庫只存 SHA-256，有效 30 天，可登出或由管理員停用帳號時撤銷。同一使用者名稱 15 分鐘內失敗 10 次會回 429。
+
+### 角色與權限
+
+| 角色 | 權限 |
+| --- | --- |
+| 管理員 `admin` | 所有會話、日誌、統計；管理使用者；可取得 `WEBHOOK_TOKEN`（複製「curl（含 Token）」） |
+| 普通使用者 `user` | 只看得到被授權的會話：列表、歷史、傳送／附件、日誌、統計、`/api/files` 全部依授權過濾；未授權的會話一律回 **404**（不洩漏是否存在）。不能綁定 Codex ID，也拿不到 `WEBHOOK_TOKEN` |
+| `can_create` 旗標 | 普通使用者可新建（傳送到新 key）與刪除會話；自己建立的會話自動授權給自己 |
+
+`WEBHOOK_TOKEN` 永遠擁有完整權限：既有的 Webhook 整合不受影響，也可用來登入控制台救回管理員。
+
+### 初始化
+
+1. **環境變數**：若資料庫中沒有管理員，且設定了 `ADMIN_USERNAME`／`ADMIN_PASSWORD`，啟動時自動建立該管理員（之後可以從環境變數移除）。
+2. **控制台**：否則登入頁會提示「使用访问令牌登录」。用 `WEBHOOK_TOKEN` 登入後頂部出現橫幅，點「创建管理员」建立第一個帳號並自動切換成該帳號。
+
+### API
+
+公開：`GET /api/auth/status` → `{needs_setup}`；`POST /api/auth/login {username,password}` → `{token, expires_at, user}`，之後以 `Authorization: Bearer <token>` 呼叫所有 API。
+
+已登入：`GET /api/whoami`、`POST /api/auth/logout`、`POST /api/auth/password {current_password,new_password}`（會登出其他裝置）、`POST /api/auth/setup {username,password}`（僅 `WEBHOOK_TOKEN` 且尚無管理員時）、`GET /api/webhook-token`（僅管理員）。
+
+管理員：`GET/POST /api/users`、`GET/PATCH/DELETE /api/users/:id`、`PUT /api/users/:id/sessions {sessions:[...]}`（整批覆寫授權）、`POST /api/users/:id/password {password}`。`POST`／`PATCH` 欄位：`username`、`password`、`role`、`can_create`、`disabled`、`sessions`。停用或重設密碼會撤銷該使用者的所有 Token；系統至少保留一個啟用中的管理員，管理員不能降級、停用或刪除自己。
+
+| 變數 | 說明 |
+| --- | --- |
+| USERS_DB | 使用者資料庫路徑，預設 `DATA_DIR/users.db` |
+| ADMIN_USERNAME / ADMIN_PASSWORD | 尚無管理員時自動建立（密碼至少 8 字元） |
+| SQLITE_DRIVER | `node` 或 `better-sqlite3`，預設自動選擇 |
 
 ## 附件與 Webhook 複製
 

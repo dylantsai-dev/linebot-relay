@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 node test/attachments-tests.js
 node test/console-dist-tests.js
+node test/users-tests.js
 node test/in-process-tests.js
 node test/appserver-tests.js
 node test/appserver-tests.js --sockets
@@ -86,7 +87,8 @@ async function main() {
   for (const route of ['/api/whoami', '/api/sessions', '/api/requests', '/api/stats', '/api/sessions/example/history', '/api/send']) {
     assert.deepEqual(await request(route, { headers: { Authorization: '' } }), { status: 401, body: { error: 'Unauthorized' } });
   }
-  assert.deepEqual((await request('/api/whoami')).body, { ok: true });
+  assert.equal((await request('/api/whoami')).body.ok, true);
+  assert.equal((await request('/api/whoami')).body.role, 'admin');
   const sent = await request('/api/send', { method: 'POST', body: JSON.stringify({ session: 'console:test', message: 'hello console' }) });
   assert.equal(sent.status, 200);
   assert.equal(sent.body.reply, 'echo:hello console|history:1');

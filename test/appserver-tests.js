@@ -61,6 +61,7 @@ function loadRelay() {
       if (name === 'node:http') return { createServer: callback => { handler = callback; return { listen() {} }; } };
       if (name === 'node:child_process') return { spawn() { spawnCount++; throw new Error('EXEC_FALLBACK'); } };
       if (name === './lib/attachments') return require('../lib/attachments');
+      if (name === './lib/users') return require('../lib/users');
       return require(name);
     },
   });

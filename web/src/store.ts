@@ -1,5 +1,5 @@
 import { reactive, ref, computed, watch } from 'vue'
-import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow } from './lib/types'
+import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User } from './lib/types'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 export const MAX_FILES = 5
@@ -7,10 +7,11 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024
 // Browsers normalize dot-only URL segments, even with a single percent encoding.
 export const keyPath = (key: string) => (key === '.' || key === '..' ? key.replace(/\./g, '%252E') : encodeURIComponent(key))
 
-type Tab = 'sessions' | 'logs' | 'docs'
+type Tab = 'sessions' | 'logs' | 'docs' | 'users'
 export const state = reactive({
   token: '',
   authed: false,
+  me: null as Me | null,
   booting: true,
   tab: 'sessions' as Tab,
   sessions: [] as Session[],
@@ -56,13 +57,13 @@ export function toggleTheme() { themeChoice.value = isDark.value ? 'light' : 'da
 /* ---------- api ---------- */
 let epoch = 0
 export class ApiError extends Error { constructor(message: string, public status: number) { super(message) } }
-export async function api<T = any>(route: string, options: RequestInit = {}): Promise<T> {
+export async function api<T = any>(route: string, options: RequestInit = {}, auth = true): Promise<T> {
   const isForm = options.body instanceof FormData
-  const response = await fetch(route, { ...options, cache: 'no-store', headers: { ...(isForm || !options.body ? {} : { 'Content-Type': 'application/json' }), Authorization: `Bearer ${state.token}` } })
+  const response = await fetch(route, { ...options, cache: 'no-store', headers: { ...(isForm || !options.body ? {} : { 'Content-Type': 'application/json' }), ...(auth ? { Authorization: `Bearer ${state.token}` } : {}) } })
   let data: any = {}
   try { data = await response.json() } catch { /* empty body */ }
   if (!response.ok) {
-    if (response.status === 401 && state.authed) { logout(); toast('登录已失效，请重新输入 Token') }
+    if (response.status === 401 && state.authed && auth) { logout(false); toast('登录已失效，请重新登录') }
     throw new ApiError(data.error || `请求失败 ${response.status}`, response.status)
   }
   return data as T
@@ -72,15 +73,19 @@ const TOKEN_KEY = 'relay-token'
 function storageGet(store: Storage, key: string) { try { return store.getItem(key) } catch { return null } }
 function clearTokens() { for (const store of [localStorage, sessionStorage]) try { store.removeItem(TOKEN_KEY) } catch { /* ignore */ } }
 
+/** Enter the console with a bearer token: the WEBHOOK_TOKEN (super-admin) or a user login token. */
 export async function login(value: string, remember: boolean) {
   state.token = value
+  let me: Me
   try {
-    await api('/api/whoami')
+    me = await api<Me>('/api/whoami')
   } catch (error) {
     clearTokens(); state.token = ''
     const e = error as ApiError
-    throw new Error(e.status === 401 ? 'Token 不正确' : `连接失败：${e.message}`)
+    throw new Error(e.status === 401 ? (value.startsWith('rs_') ? '登录已失效，请重新登录' : 'Token 不正确') : `连接失败：${e.message}`)
   }
+  state.me = me
+  if (state.tab === 'users' && me.role !== 'admin') state.tab = 'sessions'
   clearTokens()
   try { (remember ? localStorage : sessionStorage).setItem(TOKEN_KEY, value) } catch { toast('浏览器未允许保存 Token') }
   state.authed = true
@@ -89,14 +94,28 @@ export async function login(value: string, remember: boolean) {
   startPolling()
 }
 
-export function logout() {
+export async function loginPassword(username: string, password: string, remember: boolean) {
+  let data: { token: string }
+  try { data = await api<{ token: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }, false) }
+  catch (error) { const e = error as ApiError; throw new Error(e.status && e.status < 500 ? e.message : `连接失败：${e.message}`) }
+  await login(data.token, remember)
+}
+export const isAdmin = computed(() => state.me?.role === 'admin')
+export const canCreate = computed(() => !!state.me?.can_create)
+export const rememberChoice = () => !!storageGet(localStorage, TOKEN_KEY)
+
+/** Server-side logout revokes a user token; the webhook token cannot be revoked. */
+export function logout(revoke = true) {
+  if (revoke && state.me?.auth === 'user') void fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.token}` } }).catch(() => {})
+  webhookTokenCache = null
+  users.list = []; users.loaded = false
   epoch++
   stopPolling()
   for (const key of [...state.attachments.keys()]) discardAttachments(key)
   for (const job of state.pending.values()) for (const f of job.attachments) if (f.preview) URL.revokeObjectURL(f.preview)
   revokeBlobs()
   clearTokens()
-  Object.assign(state, { token: '', authed: false, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false })
+  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false })
   state.drafts.clear(); state.pending.clear()
   historySig = ''
 }
@@ -139,11 +158,17 @@ export async function selectSession(key: string) {
   await refreshHistory(key).catch(e => { state.historyError = e.message })
   if (state.selected === key) state.historyLoading = false
 }
+/** A draft session does not exist on the server yet; non-admins get 404 for it until the first send. */
+function draftMissing(key: string, error: unknown) {
+  return state.drafts.has(key) && (error as ApiError).status === 404
+}
 
 let historySig = ''
 export async function refreshHistory(key: string) {
   const own = epoch
-  const data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=200`)
+  let data: HistoryResponse
+  try { data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=200`) }
+  catch (error) { if (draftMissing(key, error)) { data = { key, session: key, history: [], source: 'local', running: false } } else throw error }
   if (state.selected !== key || own !== epoch) return
   state.historyError = ''
   state.historySource = data.source
@@ -278,3 +303,45 @@ function startPolling() {
   timers.push(window.setInterval(() => { if (state.pending.size && !document.hidden) state.now = Date.now() }, 1000))
 }
 function stopPolling() { while (timers.length) clearInterval(timers.pop()) }
+
+/* ---------- webhook token for the "含 Token" copy option ---------- */
+let webhookTokenCache: string | null = null
+/** Token login: the token itself. Admin accounts fetch it on demand; other users never get it. */
+export async function webhookToken(): Promise<string | null> {
+  if (!isAdmin.value) return null
+  if (state.me?.auth === 'token') return state.token
+  webhookTokenCache ??= (await api<{ token: string }>('/api/webhook-token')).token
+  return webhookTokenCache
+}
+
+/* ---------- users (admin) ---------- */
+export const users = reactive({ list: [] as User[], loaded: false, loading: false, error: '' })
+export async function refreshUsers() {
+  const own = epoch
+  users.loading = true
+  try {
+    const data = await api<{ users: User[] }>('/api/users')
+    if (own !== epoch) return
+    users.list = data.users; users.loaded = true; users.error = ''
+  } catch (error) { if (own === epoch) users.error = (error as Error).message }
+  finally { users.loading = false }
+}
+export interface UserInput { username?: string; password?: string; role?: 'admin' | 'user'; can_create?: boolean; disabled?: boolean; sessions?: string[] }
+export async function createUser(input: UserInput) {
+  const data = await api<{ user: User }>('/api/users', { method: 'POST', body: JSON.stringify(input) })
+  await refreshUsers(); return data.user
+}
+export async function updateUser(id: number, input: UserInput) {
+  const data = await api<{ user: User }>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) })
+  await refreshUsers()
+  if (state.me?.user?.id === id) state.me = await api<Me>('/api/whoami')
+  return data.user
+}
+export async function resetPassword(id: number, password: string) { await api(`/api/users/${id}/password`, { method: 'POST', body: JSON.stringify({ password }) }) }
+export async function deleteUser(id: number) { await api(`/api/users/${id}`, { method: 'DELETE' }); await refreshUsers() }
+export async function changeOwnPassword(current: string, next: string) { await api('/api/auth/password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }) }) }
+/** First-run: create the first admin while signed in with the webhook token, then switch to that account. */
+export async function setupAdmin(username: string, password: string) {
+  const data = await api<{ token: string }>('/api/auth/setup', { method: 'POST', body: JSON.stringify({ username, password }) })
+  await login(data.token, rememberChoice())
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { state, keyPattern, createSession, deleteSession, toast } from '../store'
+import { state, keyPattern, createSession, deleteSession, toast, isAdmin } from '../store'
 import SessionList from './SessionList.vue'
 import ChatView from './ChatView.vue'
 
@@ -33,9 +33,12 @@ async function confirmDelete() {
         <label class="field-label" for="new-key">会话 key</label>
         <input id="new-key" ref="keyInput" v-model.trim="newKey" class="input mono" maxlength="128" autocomplete="off" placeholder="例如 line:U123">
         <small class="field-hint" :class="{ error: newKey && !keyPattern.test(newKey) }">1–128 个字符，仅限 A–Z a–z 0–9 _ . : -</small>
-        <label class="field-label" for="new-id">Codex 会话 ID <span class="muted">（可选）</span></label>
-        <input id="new-id" v-model.trim="newId" class="input mono" autocomplete="off" placeholder="绑定已有会话">
-        <small class="field-hint" :class="{ error: newId && !idPattern.test(newId) }">8–64 位字母、数字、连字符。发送第一条消息后才会保存到服务端。</small>
+        <template v-if="isAdmin">
+          <label class="field-label" for="new-id">Codex 会话 ID <span class="muted">（可选）</span></label>
+          <input id="new-id" v-model.trim="newId" class="input mono" autocomplete="off" placeholder="绑定已有会话">
+          <small class="field-hint" :class="{ error: newId && !idPattern.test(newId) }">8–64 位字母、数字、连字符。发送第一条消息后才会保存到服务端。</small>
+        </template>
+        <small v-else class="field-hint">发送第一条消息后创建，并自动授权给你。</small>
         <div class="dialog-actions">
           <button type="button" class="btn" @click="newDialog?.close()">取消</button>
           <button class="btn primary" :disabled="!keyPattern.test(newKey) || (!!newId && !idPattern.test(newId))">创建</button>

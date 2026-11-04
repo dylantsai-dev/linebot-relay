@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
-  "engines": { "node": ">=20" },
-  "scripts": { "start": "node server.js", "test": "bash test/run-tests.sh" }
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "bash test/run-tests.sh"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.11.1"
+  }
 }

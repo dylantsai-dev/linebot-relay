@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { logs, refreshLogs } from '../store'
+import { logs, refreshLogs, isAdmin } from '../store'
 import { time, duration, uptime } from '../lib/format'
 import Icon from './Icon.vue'
 onMounted(() => { if (!logs.loaded) void refreshLogs() })
@@ -21,7 +21,7 @@ const cards = computed(() => {
   <div class="page">
     <div class="page-inner">
       <div class="page-head">
-        <div><h1>日志</h1><p class="muted">最近 100 次 Webhook 与控制台调用，时间为台北时间。</p></div>
+        <div><h1>日志</h1><p class="muted">最近 100 次 Webhook 与控制台调用，时间为台北时间。<template v-if="!isAdmin">仅显示你有权访问的会话。</template></p></div>
       </div>
       <div class="stats">
         <template v-if="cards.length">
