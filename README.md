@@ -23,27 +23,58 @@
 
 - 🔗 **只关联已有 Codex 会话**：控制台和 Webhook 永远不会在 Codex 里新建线程，ID 不存在直接 404
 - ⚡ **流式输出**：回复、思考过程、命令输出边生成边推送（流式 HTTP + 15 秒心跳，断线时 3 秒轮询兜底）
+- 🔄 **刷新不丢任务**：地址栏带 `#s=<会话名>`，刷新后自动回到该会话，正在跑的回合显示「运行中」并继续实时输出
+- ⏹️ **一键停止**：运行中可点「停止」，通过 app-server `turn/interrupt` 中断当前回合
+- 🚦 **排队 / 引导**：AI 忙时发消息可选「排队」（等当前回合结束再发）或「引导」（`turn/steer` 直接插进正在跑的回合）
+- 📎 **任意文件上传**：图片作为图像输入交给 Codex，其他文件保存到服务器并把绝对路径告诉 Codex；支持拖拽、粘贴、多选
+- ⬇️ **文件下载卡片**：消息里的附件显示为文件卡片，走签名链接下载
+- 🪝 **三个 Webhook**：`/webhook`（`mode` 参数）、`/webhook/queue`（固定排队）、`/webhook/steer`（固定引导），都支持 multipart 传文件
 - 👥 **用户与权限**：SQLite 存用户，超级管理员决定谁能看哪些会话
 - 🖼️ **图片显示**：AI 生成的图片通过签名链接安全展示，点击放大
-- 📎 **附件上传**：消息可附带文件（默认最多 5 个、单个 20 MB）
 - 📝 **Markdown 渲染**：marked + DOMPurify，安全又好看
-- 🧵 **排队与并发**：同一会话串行排队，全局并发上限可配
 - 🔔 **异步回调**：Webhook 可带 `callback_url`，完成后回推结果
-- 🌗 **Vue 3 控制台**：极简黑白灰，深浅色、手机端都适配
+- 🌗 **Vue 3 控制台**：深浅色、手机端都适配
 - 🪶 **后端零 npm 依赖**：纯 Node 22 内置模块（`node:sqlite`），`better-sqlite3` 仅作可选后备
 
 ## 🏗️ 架构
 
 ```mermaid
 flowchart LR
-  W[🤖 Webhook 调用方] -- POST /webhook --> S
+  W[🤖 Webhook 调用方] -- POST /webhook · /webhook/queue · /webhook/steer --> S
   B[🖥️ 浏览器控制台] -- /api/* --> S
-  S[⚙️ server.js 中继] -- JSON-RPC over WebSocket<br/>unix socket --> A[🧠 codex app-server]
+  S[⚙️ server.js 中继<br/>每会话一个队列] -- JSON-RPC over WebSocket<br/>unix socket --> A[🧠 codex app-server]
   A --> T[(🧵 Codex 线程)]
   S <--> D[(🗄️ SQLite users.db)]
+  S <--> U[(📎 UPLOAD_DIR 附件)]
   S -. 流式推送 /api/sessions/:key/stream .-> B
   S -. callback_url .-> W
 ```
+
+## 🚦 排队 vs 引导
+
+| 模式 | 🧵 AI 空闲时 | 🏃 AI 正在跑回合时 |
+|---|---|---|
+| 📥 **排队** `queue`（默认） | 立即作为新回合发送 | 进入该会话的队列，当前回合结束后按顺序发送 |
+| 🧭 **引导** `steer` | 插到队列最前面，马上发送 | 调用 `turn/steer`（带 `expectedTurnId`）直接注入正在跑的回合 |
+
+- 🛟 **兜底**：引导时如果没有正在跑的回合，或 Codex 拒绝了 steer，消息会自动改为排在队首发送，响应里会带 `steer_fallback`（`no_active_turn` / `steer_rejected`）
+- 🗂️ 排队中的消息在控制台里可见，还没发出去的可以撤回（普通用户只能撤回自己的）
+- 🔁 不管回合是谁发起的（控制台、Webhook 还是 Codex App 本身），排队消息都会等线程空闲再发
+
+## 📎 文件上传
+
+```mermaid
+flowchart LR
+  F[📄 文件] --> C{是图片吗<br/>png/jpeg/gif/webp}
+  C -- 是 --> I[🖼️ 保存 + 作为 localImage 图像输入]
+  C -- 否 --> P[💾 保存到 UPLOAD_DIR<br/>把绝对路径写进消息]
+  P --> X[📝 小文本文件同时内联内容]
+```
+
+- 🖱️ 控制台：点回形针、拖拽到窗口、或直接 `Ctrl/⌘+V` 粘贴
+- 🪝 Webhook：`multipart/form-data`（字段名 `file` 或 `files`），或 JSON 里的 `files: [{name, content_base64, mime}]` / `file_urls: [...]`
+- 📏 默认限制：单个 **50 MB**、最多 **10** 个、合计 **100 MB**（见环境变量）
+- 🔏 历史里的附件显示为文件卡片，通过有时效的签名链接下载
 
 ## 🔐 角色与权限
 
@@ -54,7 +85,9 @@ flowchart LR
 | 给用户分配会话 | ✅ | ❌ |
 | 用户增删改、重置密码 | ✅ | ❌ |
 | 查看 Webhook Token / 全局统计 | ✅ | ❌ |
-| 查看分到的会话、发消息 | ✅ | ✅ |
+| 查看分到的会话、发消息、上传文件 | ✅ | ✅ |
+| 排队 / 引导 / 停止回合（分到的会话） | ✅ | ✅ |
+| 撤回排队中的消息 | ✅ 全部 | ✅ 仅自己的 |
 | 修改自己的密码 | ✅ | ✅ |
 | 在 Codex 里新建会话 | 🚫 | 🚫 |
 
@@ -93,7 +126,9 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 | `CODEX_MODEL` | — | 指定模型（可选） |
 | `CODEX_TIMEOUT_MS` | `600000` | 单次运行超时 |
 | `MAX_CONCURRENCY` | `2` | 全局并发上限 |
-| `MAX_FILES` / `MAX_FILE_BYTES` | `5` / `20971520` | 附件数量与单个大小上限 |
+| `MAX_FILE_BYTES` | `52428800`（50 MB） | 单个文件大小上限 |
+| `MAX_FILES` | `10` | 每条消息最多文件数 |
+| `MAX_TOTAL_BYTES` | `104857600`（100 MB） | 每条消息文件总大小上限 |
 | `DATA_DIR` | `/opt/linebot-relay/data` | 会话、历史、用户库 |
 | `WORK_DIR` / `LOG_DIR` / `UPLOAD_DIR` | `/opt/linebot-relay/{work,logs,uploads}` | 工作、日志、上传目录 |
 | `USERS_DB` | `$DATA_DIR/users.db` | SQLite 用户库路径 |
@@ -106,20 +141,25 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| `POST` | `/webhook` | Token | 发消息到会话（可带附件、`callback_url`） |
-| `POST` | `/api/send` | 登录 | 控制台发消息 |
+| `POST` | `/webhook` | Token | 发消息到会话，`mode` = `queue`（默认）/ `steer` |
+| `POST` | `/webhook/queue` | Token | 📥 固定排队模式 |
+| `POST` | `/webhook/steer` | Token | 🧭 固定引导模式 |
+| `POST` | `/api/send` | 登录 | 控制台发消息；`async=1` 立即返回 202（`id`、`status`、`position`），之后走流式推送 |
 | `GET` | `/sessions` | Token | 会话列表（旧接口） |
 | `GET` | `/health` | 公开 | 健康检查 |
 | `GET` | `/api/auth/status` | 公开 | 是否需要初始化 |
 | `POST` | `/api/auth/login` · `logout` · `password` · `setup` | — / 登录 | 登录、退出、改密、初始化管理员 |
 | `GET` | `/api/whoami` | 登录 | 当前身份 |
-| `GET` | `/api/sessions` | 登录 | 可见会话 |
+| `GET` | `/api/sessions` | 登录 | 可见会话（含 `running` / `queued` 状态） |
 | `PUT` | `/api/sessions/:key` | 👑 | 关联 Codex 已有会话 |
 | `DELETE` | `/api/sessions/:key` | 👑 | 删除会话 |
-| `GET` | `/api/sessions/:key/history` | 已授权 | 历史消息 |
-| `GET` | `/api/sessions/:key/stream` | 已授权 | 流式推送 |
+| `GET` | `/api/sessions/:key/history` | 已授权 | 历史消息（含附件） |
+| `GET` | `/api/sessions/:key/stream` | 已授权 | 流式推送（快照 + 增量，刷新后可接上运行中的回合） |
+| `GET` | `/api/sessions/:key/queue` | 已授权 | 当前队列（运行中 / 已引导 / 排队中） |
+| `DELETE` | `/api/sessions/:key/queue/:id` | 已授权 | 撤回还没发出的排队消息 |
+| `POST` | `/api/sessions/:key/interrupt` | 已授权 | ⏹️ 停止正在运行的回合 |
 | `GET` | `/api/codex/threads` | 👑 | Codex 已有会话列表 |
-| `GET` | `/api/media/...` | 签名链接 | 图片 |
+| `GET` | `/api/media/...` | 签名链接 | 图片预览 / 附件下载 |
 | `GET` | `/api/files` · `/api/requests` · `/api/stats` | 登录 | 文件、请求日志、统计 |
 | `GET` | `/api/webhook-token` | 👑 | 获取 Token（生成 curl 用） |
 | `GET/POST` | `/api/users` | 👑 | 用户列表 / 新建 |
@@ -127,26 +167,44 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 | `PUT` | `/api/users/:id/sessions` | 👑 | 设置会话授权 |
 | `POST` | `/api/users/:id/password` | 👑 | 重置密码 |
 
-示例：
+### 🧪 Webhook 示例
 
 ```sh
-curl -X POST http://127.0.0.1:8790/webhook \
+# 💬 排队（默认），同步等回复
+curl -X POST https://your-domain.example/webhook \
   -H "Authorization: Bearer $WEBHOOK_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"session":"my-session","message":"你好 👋"}'
+
+# 🧭 引导：插进正在跑的回合
+curl -X POST https://your-domain.example/webhook/steer \
+  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"session":"my-session","message":"顺便把测试也跑一下"}'
+
+# 📎 带文件（multipart），完成后回调
+curl -X POST https://your-domain.example/webhook/queue \
+  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+  -F session=my-session \
+  -F message='帮我看看这两个文件' \
+  -F callback_url=https://example.com/callback \
+  -F file=@report.pdf \
+  -F file=@screenshot.png
 ```
+
+> 🔔 带 `callback_url` 时立即返回 `202 {accepted, id, mode}`，跑完后把结果 POST 到回调地址；不带时同步等待回复。
 
 ## 🗂️ 项目结构
 
 ```text
 linebot-relay/
-├── server.js               # ⚙️ HTTP 服务、路由、排队、权限
+├── server.js               # ⚙️ HTTP 服务、路由、排队 / 引导、权限
 ├── lib/
 │   ├── appserver.js        # 🧠 codex app-server JSON-RPC 客户端
 │   ├── ws-unix.js          # 🔌 unix socket 上的 WebSocket
 │   ├── users.js            # 👥 SQLite 用户 / 授权 / Token
 │   ├── media.js            # 🖼️ 签名图片链接
-│   └── attachments.js      # 📎 附件解析
+│   └── attachments.js      # 📎 附件解析（multipart / base64 / URL）
 ├── web/                    # 🌗 Vue 3 + Vite + TS 控制台
 │   └── src/ (App.vue, components/, store.ts, brand/mark.svg)
 ├── console.html            # 🗃️ 旧版单文件控制台
