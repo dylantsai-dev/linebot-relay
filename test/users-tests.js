@@ -27,7 +27,7 @@ async function boot(name, extra = {}) {
   const port = await freePort(), dir = path.join(temp, name);
   let output = '';
   const child = spawn(process.execPath, ['server.js'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', WEBHOOK_TOKEN: token, CODEX_APP_SERVER_SOCK: 'off', CODEX_BIN: wrapper, CONSOLE_UI: 'legacy',
-    DATA_DIR: path.join(dir, 'data'), WORK_DIR: path.join(dir, 'work'), LOG_DIR: path.join(dir, 'logs'), UPLOAD_DIR: path.join(dir, 'uploads'), FAKE_CODEX_STATE: path.join(dir, 'state'), CODEX_TIMEOUT_MS: '5000', ...extra } });
+    DATA_DIR: path.join(dir, 'data'), WORK_DIR: path.join(dir, 'work'), LOG_DIR: path.join(dir, 'logs'), UPLOAD_DIR: path.join(dir, 'uploads'), FAKE_CODEX_STATE: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex-home'), CODEX_TIMEOUT_MS: '5000', ...extra } });
   child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
   children.push(child);
   const base = `http://127.0.0.1:${port}`;
@@ -66,7 +66,7 @@ async function main() {
   }
 
   // ---- seeded admin ----
-  const { call, dir } = await boot('main', { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass-1' });
+  const { call, dir, base } = await boot('main', { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass-1' });
   assert.equal((await call(null, '/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'nope-nope' } })).status, 401);
   assert.equal((await call(null, '/api/auth/login', { method: 'POST', body: { username: 'ghost', password: 'nope-nope' } })).status, 401);
   const adminLogin = await call(null, '/api/auth/login', { method: 'POST', body: { username: 'ADMIN', password: 'admin-pass-1' } });
@@ -114,7 +114,7 @@ async function main() {
   assert.equal((await call(a, '/webhook', { method: 'POST', body: { session: 's2', message: 'sneak' } })).status, 404);
   const brandNew = await call(a, '/api/send', { method: 'POST', body: { session: 'brand-new', message: 'hi' } });
   assert.equal(brandNew.status, 404); assert.equal(brandNew.body.error, '会话不存在');
-  assert.equal((await call(a, '/api/send', { method: 'POST', body: { session: 's1', message: 'bind', codex_session_id: '12345678-aaaa' } })).status, 403);
+  assert.equal((await call(a, '/api/send', { method: 'POST', body: { session: 's1', message: 'bind', codex_session_id: '01a1a610-0000-7000-8000-00000000abcd' } })).status, 403);
   const sent = await call(a, '/api/send', { method: 'POST', body: { session: 's1', message: 'from alice' } });
   assert.equal(sent.status, 200); assert.match(sent.body.reply, /echo:from alice/);
   assert.equal((await call(a, '/api/sessions/s1', { method: 'DELETE' })).status, 403);
@@ -140,6 +140,60 @@ async function main() {
   assert.equal((await call(a, `/api/files?path=${enc(file.path)}`)).status, 200);
   assert.equal((await call(b, `/api/files?path=${enc(file.path)}`)).status, 404);
   assert.equal((await call(admin, `/api/files?path=${enc(file.path)}`)).status, 200);
+
+  // Images referenced by replies are served through signed, grant-checked /api/media URLs.
+  const picture = path.join(dir, 'work', 's1', 'out', 'plot.png');
+  fs.mkdirSync(path.dirname(picture), { recursive: true });
+  fs.writeFileSync(picture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 9, 9]));
+  fs.symlinkSync('/etc/passwd', path.join(dir, 'work', 's1', 'out', 'link.png'));
+  assert.equal((await call(a, '/api/send', { method: 'POST', body: { session: 's1', message: `![plot](${picture}) ![l](${path.join(dir, 'work', 's1', 'out', 'link.png')}) ![up](${path.join(dir, 'work', 's1', 'out', '..', '..', '..', 'data', 'users.db')})` } })).status, 200);
+  const replyA = (await call(a, '/api/sessions/s1/history')).body.history.filter(entry => entry.role === 'assistant').at(-1).text;
+  const signed = replyA.match(/\]\((\/api\/media\/[^)\s]+)\)/)?.[1];
+  assert.ok(signed, replyA);
+  assert.equal(replyA.match(/\/api\/media\//g).length, 1, 'symlinks out of the root and ../ traversal are not signed');
+  const image = await fetch(base + signed);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [137, 80, 78, 71, 13, 10, 26, 10, 9, 9]);
+  assert.equal((await fetch(base + signed.replace(/s=[^&]+/, 's=' + 'A'.repeat(32)))).status, 404, 'bad signature');
+  const forged = new URL(base + signed);
+  forged.searchParams.set('p', Buffer.from('/etc/passwd').toString('base64url'));
+  assert.equal((await fetch(forged)).status, 404, 'path swap breaks the signature');
+  forged.searchParams.set('p', new URL(base + signed).searchParams.get('p')); forged.searchParams.set('u', String(bob.id));
+  assert.equal((await fetch(forged)).status, 404, 'uid swap breaks the signature');
+  // Signed for alice, but the grant is checked at fetch time.
+  await call(admin, `/api/users/${alice.id}/sessions`, { method: 'PUT', body: { sessions: [] } });
+  assert.equal((await fetch(base + signed)).status, 404, 'revoked grant');
+  await call(admin, `/api/users/${alice.id}/sessions`, { method: 'PUT', body: { sessions: ['s1'] } });
+  assert.equal((await fetch(base + signed)).status, 200);
+  assert.equal((await fetch(base + signed, { method: 'HEAD' })).status, 200);
+  assert.equal((await call(b, '/api/sessions/s1/stream')).status, 404, 'no stream without a grant');
+
+  // Live stream over real HTTP: SSE headers, snapshot, heartbeat.
+  const controller = new AbortController();
+  const sse = await fetch(`${base}/api/sessions/s1/stream`, { headers: { Authorization: `Bearer ${a}` }, signal: controller.signal });
+  assert.equal(sse.status, 200);
+  assert.match(sse.headers.get('content-type'), /^text\/event-stream/);
+  assert.equal(sse.headers.get('x-accel-buffering'), 'no');
+  const reader = sse.body.getReader();
+  let sseText = '';
+  const started = Date.now();
+  while (!/: ping/.test(sseText) && Date.now() - started < 3000) sseText += Buffer.from((await reader.read()).value || []).toString();
+  assert.match(sseText, /event: snapshot\ndata: \{"key":"s1"/);
+  assert.match(sseText, /: ping/);
+  controller.abort();
+
+  const readSessions = () => JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'));
+  // Linking requires an existing Codex thread (exec mode: rollout files under CODEX_HOME).
+  const missingLink = await call(admin, '/api/sessions/linkme', { method: 'PUT', body: { codex_session_id: '01a1a610-0000-7000-8000-0000000000ff' } });
+  assert.equal(missingLink.status, 404); assert.equal(missingLink.body.error, 'Codex 里没有这个会话 ID');
+  assert.equal((await call(admin, '/api/send', { method: 'POST', body: { session: 'linkme', message: 'x', codex_session_id: '01a1a610-0000-7000-8000-0000000000ff' } })).status, 404);
+  assert.equal(readSessions().linkme, undefined);
+  assert.equal((await call(a, '/api/sessions/s1', { method: 'PUT', body: { codex_session_id: readSessions().s1.codex_session_id } })).status, 403);
+  assert.equal((await call(admin, '/api/sessions/linkme', { method: 'PUT', body: { codex_session_id: readSessions().s1.codex_session_id } })).status, 201);
+  assert.equal((await call(admin, '/api/sessions/linkme', { method: 'DELETE' })).status, 200);
+  assert.equal((await call(admin, '/api/codex/threads')).status, 503, 'picker needs the app-server');
 
   // Only admins create sessions. A normal user can never create one implicitly, not even for a key an
   // admin pre-granted, through any endpoint (JSON send, multipart attachments, webhook, async callback).

@@ -44,7 +44,8 @@ class FakeAppServer {
       }
       case 'thread/loaded/list': respond({ data: [...this.loaded] }); break;
       case 'thread/read':
-        if (this.failRead) send({ id, error: { message: 'read unavailable' } });
+        if (!this.threads.has(params.threadId)) send({ id, error: { code: -32600, message: `thread not loaded: ${params.threadId}` } });
+        else if (this.failRead) send({ id, error: { message: 'read unavailable' } });
         else if (this.hangRead) break;
         else respond({ thread: { id: params.threadId, updatedAt: Date.now() / 1000, ...(params.includeTurns ? { turns: this.turns.get(params.threadId) || [] } : {}) } });
         break;
@@ -73,6 +74,12 @@ class FakeAppServer {
           turn.completedAt = Date.now() / 1000;
           turn.durationMs = Math.round((turn.completedAt - turn.startedAt) * 1000);
           if (text === '__failed__') turn.error = { message: 'recorded failure' };
+          if (text === '__image__' && this.imagePath) {
+            const image = { type: 'imageGeneration', id: `img-${turnId}`, status: 'completed', revisedPrompt: 'a cat', result: 'iVBORw0KGgo=', savedPath: this.imagePath };
+            turn.items.push(image);
+            notify('item/started', { threadId, turnId, item: { ...image, status: 'inProgress', savedPath: undefined, result: '' } });
+            notify('item/completed', { threadId, turnId, item: image });
+          }
           turn.items.push({ type: 'agentMessage', phase: 'commentary', text: 'working' });
           if (text !== '__no_final__') turn.items.push({ type: 'agentMessage', phase: 'final_answer', text: `reply:${text}` });
           turn.items.push({ type: 'agentMessage', phase: 'commentary', text: 'last commentary' });
@@ -90,10 +97,23 @@ class FakeAppServer {
             send({ id: `server-${method}`, method, params: { threadId, turnId } });
           }
         }
-        if (text === '__app_slow__') {
+        if (text === '__stream__') {
+          // Streaming: item/started, deltas, a command with output, then completion.
+          const msg = { type: 'agentMessage', id: `msg-${turnId}`, text: '', phase: 'final_answer' };
+          notify('item/started', { threadId, turnId, item: msg });
+          notify('item/agentMessage/delta', { threadId, turnId, itemId: msg.id, delta: '**Hel' });
+          const step = (delay, fn) => { const timer = setTimeout(() => { this.timers.delete(timer); fn(); }, delay); this.timers.add(timer); };
+          step(this.streamDelay || 120, () => {
+            notify('item/started', { threadId, turnId, item: { type: 'commandExecution', id: `cmd-${turnId}`, command: "/bin/bash -lc 'ls -la'", cwd: '/tmp', status: 'inProgress', aggregatedOutput: null, exitCode: null } });
+            notify('item/commandExecution/outputDelta', { threadId, turnId, itemId: `cmd-${turnId}`, delta: 'total 0\n' });
+            notify('item/completed', { threadId, turnId, item: { type: 'commandExecution', id: `cmd-${turnId}`, command: "/bin/bash -lc 'ls -la'", cwd: '/tmp', status: 'completed', aggregatedOutput: 'total 0\n', exitCode: 0 } });
+            notify('item/agentMessage/delta', { threadId, turnId, itemId: msg.id, delta: 'lo**' });
+            step(this.streamDelay || 120, complete);
+          });
+        } else if (text === '__app_slow__') {
           const timer = setTimeout(() => { this.timers.delete(timer); complete(); }, 40);
           this.timers.add(timer);
-        } else if (text !== '__timeout__' && text !== '__late__') complete();
+        } else if (text !== '__timeout__' && text !== '__late__' && text !== '__stream__') complete();
         if (text === '__late__' || text === '__completed_late__') {
           const timer = setTimeout(() => { this.timers.delete(timer); respond({ turn }); }, 150);
           this.timers.add(timer);
@@ -102,7 +122,10 @@ class FakeAppServer {
       }
       case 'turn/interrupt': respond({}); break;
       case 'thread/archive': this.loaded.delete(params.threadId); respond({}); break;
-      case 'thread/list': respond({ data: [...this.threads.keys()].map(id => ({ id })) }); break;
+      case 'thread/list':
+        this.lastList = params;
+        respond({ data: [...this.threads.keys()].filter(id => !params?.searchTerm || (this.names?.get(id) || '').includes(params.searchTerm)).map(id => ({ id, name: this.names?.get(id) || null, preview: `preview ${id.slice(0, 4)}`, updatedAt: 1793810711, createdAt: 1793800000, cwd: '/tmp/fake-cwd', status: { type: 'idle' }, source: 'vscode', parentThreadId: null, ephemeral: false })), nextCursor: null });
+        break;
       default: send({ id, error: { code: -32601, message: 'unsupported fixture request' } });
     }
   }

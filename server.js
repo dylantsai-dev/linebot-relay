@@ -9,6 +9,7 @@ const { URL } = require('node:url');
 const { AppServer } = require('./lib/appserver');
 const { readRequest, prepareAttachments, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
+const { Media, rewriteMarkdown, itemImages, localPath } = require('./lib/media');
 
 function positiveInteger(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -33,6 +34,7 @@ const config = {
   maxFiles: positiveInteger('MAX_FILES', 5),
   concurrency: positiveInteger('MAX_CONCURRENCY', 2),
   timeout: positiveInteger('CODEX_TIMEOUT_MS', 600000),
+  codexHome: path.resolve(process.env.CODEX_HOME || '/root/.codex'),
 };
 for (const dir of [config.data, config.work, config.logs]) fs.mkdirSync(dir, { recursive: true });
 const sessionsFile = path.join(config.data, 'sessions.json');
@@ -43,6 +45,7 @@ try {
   if (error.code !== 'ENOENT') throw error;
 }
 const authHash = crypto.createHash('sha256').update(`Bearer ${process.env.WEBHOOK_TOKEN}`).digest();
+const media = new Media(process.env.WEBHOOK_TOKEN);
 const users = new Users(path.resolve(process.env.USERS_DB || path.join(config.data, 'users.db')));
 // Optional first-admin seed; ignored once any admin exists.
 async function seedAdmin() {
@@ -198,8 +201,15 @@ function threadHistory(thread, local) {
     if (turn.status !== 'inProgress') {
       const agents = items.filter(item => item.type === 'agentMessage');
       const finals = agents.filter(item => item.phase === 'final_answer');
+      const before = history.length;
       for (const item of finals.length ? finals : agents.slice(-1)) {
         history.push({ role: 'assistant', text: item.text || '', time, duration_ms: turn.durationMs ?? undefined, codex_session_id: thread.id });
+      }
+      // Generated / viewed images live in their own items, not in the reply text.
+      const images = items.flatMap(itemImages);
+      if (images.length) {
+        if (history.length > before) history.at(-1).images = images;
+        else history.push({ role: 'assistant', text: '', time, duration_ms: turn.durationMs ?? undefined, codex_session_id: thread.id, images });
       }
     }
     if (turn.status === 'failed') {
@@ -214,17 +224,124 @@ function threadHistory(thread, local) {
   history.push(...local.filter(entry => entry.role === 'user' && !matchedUsers.has(entry) && failedIds.has(entry.request_id)), ...orphanErrors);
   return history.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0));
 }
-async function sessionHistory(key, limit) {
+// ----- images: signed URLs for files Codex generated or referenced -----
+function mediaRoots(key, thread) {
+  const id = thread?.id || sessions[key]?.codex_session_id;
+  return [path.join(config.work, safeKey(key)), path.join(config.uploads, safeKey(key)), path.join(config.codexHome, 'attachments'),
+    ...(id ? [path.join(config.codexHome, 'generated_images', id)] : []),
+    ...(thread ? [thread.cwd, ...(thread.environments || []).flatMap(env => [env?.cwd, ...(Array.isArray(env?.runtimeWorkspaceRoots) ? env.runtimeWorkspaceRoots : [])])] : [])]
+    .filter(root => typeof root === 'string' && root);
+}
+function principalUid(principal) { return principal.user?.id || 0; }
+function cachedThread(key) {
+  const id = sessions[key]?.codex_session_id;
+  return id && appserver ? appserver.threads.get(id)?.cache?.thread || (id ? { id } : null) : (id ? { id } : null);
+}
+function insideDir(root, target) { const relative = path.relative(root, target); return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative); }
+function decorateEntry(entry, key, principal, roots) {
+  const uid = principalUid(principal);
+  const toUrl = raw => media.url(raw, roots, key, uid);
+  let next = entry;
+  if (entry.role === 'assistant' && entry.text) {
+    const { text, used } = rewriteMarkdown(entry.text, toUrl);
+    if (text !== entry.text) next = { ...next, text };
+    if (entry.images) next = { ...next, images: entry.images.filter(image => !image.path || !used.includes(path.normalize(image.path))) };
+  }
+  if (next.images) {
+    const images = next.images.map(image => {
+      const url = image.url || (image.path ? toUrl(image.path) : null);
+      return url ? { name: image.name || 'image', kind: 'image', url, source: image.source, ...(image.prompt ? { prompt: image.prompt } : {}) } : null;
+    }).filter(Boolean);
+    next = { ...next };
+    if (images.length) next.images = images; else delete next.images;
+  }
+  // Attachments outside UPLOAD_DIR (e.g. pasted into the Codex App) cannot use /api/files.
+  if (next.attachments?.some(file => file.kind === 'image' && file.path && !insideDir(config.uploads, path.resolve(file.path)))) {
+    next = { ...next, attachments: next.attachments.map(file => {
+      if (file.kind !== 'image' || !file.path || insideDir(config.uploads, path.resolve(file.path))) return file;
+      const url = toUrl(file.path);
+      return url ? { ...file, path: undefined, url } : file;
+    }) };
+  }
+  return next;
+}
+function publicLive(liveTurn, key, principal, thread) {
+  if (!liveTurn) return null;
+  const roots = mediaRoots(key, thread), uid = principalUid(principal);
+  return { turnId: liveTurn.turnId, startedAt: new Date(liveTurn.startedAt).toISOString(), items: liveTurn.items.map(item => publicLiveItem(item, key, uid, roots)) };
+}
+function publicLiveItem(item, key, uid, roots) {
+  if (item.kind !== 'image' || !item.path) return item;
+  const { path: file, ...rest } = item;
+  const url = media.url(file, roots, key, uid);
+  return url ? { ...rest, url } : rest;
+}
+async function sessionHistory(key, limit, principal) {
   const local = readLines(path.join(historyDir, `${safeKey(key)}.jsonl`)).map(JSON.parse);
   const id = sessions[key]?.codex_session_id;
   if (appserver?.connected && id) {
     try {
       const cache = await appserver.readThread(id);
-      const running = cache.thread.turns.some(turn => turn.status === 'inProgress') || appserver.threadState(id).status === 'active';
-      return { key, session: key, history: threadHistory({ ...cache.thread, id }, local).slice(-limit), source: 'thread', revision: cache.revision, running };
+      const thread = { ...cache.thread, id };
+      const active = cache.thread.turns.find(turn => turn.status === 'inProgress');
+      const running = !!active || appserver.threadState(id).status === 'active';
+      const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
+      const roots = mediaRoots(key, thread);
+      return { key, session: key, history: threadHistory(thread, local).slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'thread', revision: cache.revision, running,
+        ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread) } : {}) };
     } catch { /* Preserve local history if the App is unavailable. */ }
   }
-  return { key, session: key, history: local.slice(-limit), source: 'local', running: !!live.get(key)?.running };
+  const roots = mediaRoots(key, null);
+  return { key, session: key, history: local.slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'local', running: !!live.get(key)?.running };
+}
+
+// ----- Codex thread lookup: sessions link existing threads -----
+const THREAD_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+function validThreadId(id) { return typeof id === 'string' && THREAD_ID.test(id); }
+function rolloutExists(id) {
+  const suffix = `-${id.toLowerCase()}.jsonl`;
+  for (const dir of ['sessions', 'archived_sessions']) {
+    let names;
+    try { names = fs.readdirSync(path.join(config.codexHome, dir), { recursive: true }); } catch { continue; }
+    if (names.some(name => String(name).toLowerCase().endsWith(suffix))) return true;
+  }
+  return false;
+}
+// Resolves when Codex knows the thread; otherwise throws 404 without creating anything.
+async function verifyThread(id) {
+  if (!validThreadId(id)) throw failure('Codex 会话 ID 格式不正确（应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079）', 400);
+  if (appserver && fs.existsSync(appserverSocket)) {
+    try {
+      await appserver.connect();
+      const result = await appserver.request('thread/read', { threadId: id, includeTurns: false }, 8000);
+      if (result?.thread?.id) return result.thread;
+    } catch (error) {
+      if (!/not loaded|not found|no rollout|invalid thread|unknown thread|does not exist/i.test(error.message) && !error.appserverConnection && !/timed out/i.test(error.message)) throw failure(`无法验证 Codex 会话 ID：${error.message}`, 502);
+    }
+  }
+  if (rolloutExists(id)) return { id };
+  throw failure('Codex 里没有这个会话 ID', 404);
+}
+async function listCodexThreads(url) {
+  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('Codex app-server 未连接，无法列出会话；可以手动输入会话 ID', 503);
+  try { await appserver.connect(); } catch { throw failure('Codex app-server 未连接，无法列出会话；可以手动输入会话 ID', 503); }
+  const params = { limit: limitOf(url, 40, 100), sortKey: 'updated_at', sortDirection: 'desc', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] };
+  const q = (url.searchParams.get('q') || '').trim().slice(0, 200), cursor = url.searchParams.get('cursor');
+  if (q) params.searchTerm = q;
+  if (cursor) params.cursor = cursor.slice(0, 1024);
+  if (url.searchParams.get('archived') === '1') params.archived = true;
+  const result = await appserver.request('thread/list', params, 15000);
+  const linked = new Map();
+  for (const [key, entry] of Object.entries(sessions)) if (entry.codex_session_id) linked.set(entry.codex_session_id, [...(linked.get(entry.codex_session_id) || []), key]);
+  const clip = (value, size) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, size) : '';
+  return {
+    threads: (result?.data || []).filter(thread => thread && validThreadId(thread.id) && !thread.parentThreadId && !thread.ephemeral).map(thread => ({
+      id: thread.id, title: clip(thread.name, 120) || clip(thread.preview, 120) || '（无标题）', preview: clip(thread.preview, 240),
+      updated_at: unixTime(thread.updatedAt) || null, created_at: unixTime(thread.createdAt) || null, cwd: typeof thread.cwd === 'string' ? thread.cwd : null,
+      status: thread.status?.type || null, source: typeof thread.source === 'string' ? thread.source : null, linked: linked.get(thread.id) || [],
+    })),
+    next_cursor: result?.nextCursor || null,
+  };
 }
 async function sessionListing() {
   const ids = [...new Set(Object.values(sessions).map(s => s.codex_session_id).filter(Boolean))];
@@ -480,7 +597,7 @@ function send(res, status, body) {
 }
 function validate(body) {
   if (!body || typeof body !== 'object' || typeof body.session !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(body.session) || (body.message !== undefined && typeof body.message !== 'string') || (!body.message?.trim() && !body.files?.length && !body.file_urls?.length && !body._fileCount)) throw failure('Invalid session or message', 400);
-  if (body.codex_session_id !== undefined && (typeof body.codex_session_id !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(body.codex_session_id))) throw failure('Invalid codex_session_id', 400);
+  if (body.codex_session_id !== undefined && !validThreadId(body.codex_session_id)) throw failure('Invalid codex_session_id: Codex 会话 ID 应为 UUID', 400);
   if (body.callback_url !== undefined) {
     let url;
     try { url = new URL(body.callback_url); } catch { throw failure('Invalid callback_url', 400); }
@@ -521,6 +638,82 @@ function serveConsole(req, res, route) {
   consoleHtml(res, index);
 }
 
+function serveMedia(req, res, url) {
+  const signed = media.verify(url.searchParams);
+  const deny = () => send(res, 404, { error: 'Image not found' });
+  if (!signed || !validKey(signed.key)) { deny(); return; }
+  // Re-check the grant at fetch time: a revoked grant or disabled user loses access immediately.
+  if (signed.uid) {
+    const user = users.get(signed.uid);
+    if (!user || user.disabled || (user.role !== 'admin' && !(users.isGranted(user.id, signed.key) && sessionExists(signed.key)))) { deny(); return; }
+  }
+  media.serve(req, res, signed.file);
+}
+
+// ----- live streaming (SSE over fetch; the Authorization header works with fetch streaming) -----
+const STREAM_HEARTBEAT_MS = positiveInteger('STREAM_HEARTBEAT_MS', 15000);
+const streams = new Set();
+function streamSession(req, res, key, principal) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-store, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff' });
+  res.socket?.setNoDelay?.(true);
+  const uid = principalUid(principal);
+  let queue = [], flushTimer = null, closed = false;
+  const write = text => { if (!closed && !res.destroyed) res.write(text); };
+  const event = (name, data) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+  const flush = () => {
+    flushTimer = null;
+    if (!queue.length) return;
+    // Coalesce consecutive deltas for the same item/field into one event.
+    const merged = [];
+    for (const item of queue) {
+      const last = merged.at(-1);
+      if (last && last.name === 'delta' && item.name === 'delta' && last.data.id === item.data.id && last.data.field === item.data.field) last.data = { ...last.data, delta: last.data.delta + item.data.delta };
+      else merged.push(item);
+    }
+    queue = [];
+    write(merged.map(item => event(item.name, item.data)).join(''));
+  };
+  const push = (name, data) => { queue.push({ name, data }); if (!flushTimer) flushTimer = setTimeout(flush, 60); };
+  const snapshot = () => {
+    const id = sessions[key]?.codex_session_id;
+    const state = id && appserver ? appserver.threads.get(id) : null;
+    const relay = live.get(key);
+    write(event('snapshot', { key, codex_session_id: id || null, running: !!(relay?.running || state?.status === 'active' || state?.live), queued: relay?.queued || 0, live: publicLive(state?.live || null, key, principal, cachedThread(key)) }));
+  };
+  write('retry: 3000\n\n');
+  snapshot();
+  const off = appserver ? appserver.onLive((threadId, data) => {
+    if (threadId !== sessions[key]?.codex_session_id) return;
+    // Copy now: the live item keeps changing (deltas) before the batch is flushed.
+    if (data.type === 'item') push('item', { item: { ...publicLiveItem(data.item, key, uid, mediaRoots(key, cachedThread(key))) } });
+    else if (data.type === 'delta') push('delta', data);
+    else if (data.type === 'turn') { push('turn', data); flush(); }
+  }) : () => {};
+  // Joined mid-turn (e.g. relay restarted): seed the live buffer from the thread snapshot.
+  const id = sessions[key]?.codex_session_id;
+  if (appserver?.connected && id && !appserver.threads.get(id)?.live && appserver.threads.get(id)?.status === 'active') {
+    appserver.readThread(id).then(cache => { const turn = cache.thread.turns.find(t => t.status === 'inProgress'); if (turn && appserver.seedLive(id, turn)) snapshot(); }).catch(() => {});
+  }
+  const heartbeat = setInterval(() => {
+    // A revoked login or lost grant ends the stream.
+    if (principal.kind === 'user') {
+      const fresh = users.authenticate((req.headers.authorization || '').slice(7));
+      if (!fresh || !userCanUse({ admin: fresh.user.role === 'admin', user: fresh.user }, key)) { close(); res.end(); return; }
+    }
+    write(`: ping ${Date.now()}\n\n`);
+  }, STREAM_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  const entry = { close: () => { close(); try { res.end(); } catch {} } };
+  streams.add(entry);
+  function close() {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat); clearTimeout(flushTimer); off(); streams.delete(entry);
+  }
+  req.on('close', close);
+  res.on('close', close);
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now(), requestId = crypto.randomUUID();
   let body, route;
@@ -545,6 +738,7 @@ const server = http.createServer(async (req, res) => {
       const input = await readJson(req);
       send(res, 200, await users.login(input.username, input.password)); return;
     }
+    if ((req.method === 'GET' || req.method === 'HEAD') && route.startsWith('/api/media/')) { serveMedia(req, res, url); return; }
     const principal = authenticate(req);
     if (!principal) { send(res, 401, { error: 'Unauthorized' }); record(401); return; }
     const visible = visibleKeys(principal);
@@ -580,6 +774,10 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ token: process.env.WEBHOOK_TOKEN })); return;
       }
       if (route === '/api/users' || route.startsWith('/api/users/')) { await handleUsers(req, res, route, principal); return; }
+      if (req.method === 'GET' && route === '/api/codex/threads') {
+        if (!principal.admin) throw failure('Forbidden', 403);
+        send(res, 200, await listCodexThreads(url)); return;
+      }
       if (req.method === 'GET' && route === '/api/sessions') {
         const listing = await sessionListing();
         send(res, 200, { sessions: visible ? listing.filter(s => visible.has(s.key)) : listing }); return;
@@ -597,7 +795,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream)?$/);
       if (match) {
         let key;
         try {
@@ -607,8 +805,22 @@ const server = http.createServer(async (req, res) => {
         } catch { throw failure('Invalid session', 400); }
         if (!validKey(key)) throw failure('Invalid session', 400);
         const file = path.join(historyDir, `${safeKey(key)}.jsonl`);
+        // Admin: link (or re-link) a key to an existing Codex thread without sending a message.
+        if (req.method === 'PUT' && !match[2]) {
+          if (!principal.admin) throw failure('仅管理员可以关联 Codex 会话', 403);
+          const input = await readJson(req);
+          if (!validThreadId(input.codex_session_id)) throw failure('Codex 会话 ID 格式不正确（应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079）', 400);
+          if (live.has(key)) throw failure('Session is running or queued', 409);
+          await verifyThread(input.codex_session_id);
+          const now = new Date().toISOString(), existed = !!sessions[key];
+          sessions[key] = { codex_session_id: input.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.codex_session_id === input.codex_session_id ? sessions[key].messages || 0 : 0 };
+          persist();
+          if (appserver) void appserver.subscribe(input.codex_session_id).catch(() => {});
+          send(res, existed ? 200 : 201, { session: { key, ...sessions[key] } }); return;
+        }
         if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
-        if (req.method === 'GET' && match[2]) { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550))); return; }
+        if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550), principal)); return; }
+        if (req.method === 'GET' && match[2] === '/stream') { streamSession(req, res, key, principal); return; }
         if (req.method === 'DELETE' && !match[2]) {
           if (!principal.admin) throw failure('仅管理员可以删除会话', 403);
           if (live.has(key)) throw failure('Session is running or queued', 409);
@@ -626,6 +838,8 @@ const server = http.createServer(async (req, res) => {
     if (body && typeof body === 'object') body._fileCount = parsed.files.length;
     validate(body);
     authorizeSend(principal, body);
+    // Linking must name a thread that exists in Codex; nothing is created otherwise.
+    if (body.codex_session_id !== undefined && body.codex_session_id !== sessions[body.session]?.codex_session_id) await verifyThread(body.codex_session_id);
     if (!body.message?.trim()) body.message = '请查看附件。';
     const prepared = await prepareAttachments(body, parsed.files, config, safeKey);
     body.attachments = prepared.attachments;
@@ -665,6 +879,7 @@ seedAdmin().finally(() => server.listen(config.port, config.host, () => console.
 function shutdown() {
   watcherStopped = true;
   clearTimeout(watcherTimer);
+  for (const stream of [...streams]) stream.close();
   appserver?.close();
   server.close();
   users.close();

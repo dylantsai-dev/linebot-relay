@@ -5,6 +5,7 @@ import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
 import { fileSize } from '../lib/format'
 import MessageItem from './MessageItem.vue'
+import LiveTurn from './LiveTurn.vue'
 import Icon from './Icon.vue'
 
 const emit = defineEmits<{ delete: [] }>()
@@ -35,11 +36,13 @@ const optimistic = computed<HistoryEntry | null>(() => {
   return echoed ? null : { role: 'user', text: p.message, source: 'console', attachments: p.attachments.map(f => ({ name: f.name, size: f.size, kind: f.kind, preview: f.preview })) }
 })
 const elapsed = computed(() => (pending.value ? Math.max(0, Math.floor((state.now - pending.value.started) / 1000)) : 0))
+const liveShown = computed(() => running.value && !!state.live?.items.length)
+const liveElapsed = computed(() => (state.live?.startedAt ? Math.max(0, Math.floor((state.now - Date.parse(state.live.startedAt)) / 1000)) : undefined))
 
 /* ---- scroll: stick to bottom only when already near it; never jump otherwise ---- */
 let stick = true
-watch([items, optimistic, running], () => { const el = scroller.value; if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }, { flush: 'pre' })
-watch([items, optimistic, running], () => { const el = scroller.value; if (el && (stick || pending.value)) el.scrollTop = el.scrollHeight }, { flush: 'post' })
+watch([items, optimistic, running, () => state.live], () => { const el = scroller.value; if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }, { flush: 'pre' })
+watch([items, optimistic, running, () => state.live], () => { const el = scroller.value; if (el && (stick || pending.value)) el.scrollTop = el.scrollHeight }, { flush: 'post' })
 
 watch(() => state.selected, async (key, prev) => {
   if (prev !== undefined) textDrafts.set(prev, text.value)
@@ -86,6 +89,7 @@ const retry = () => selectSession(state.selected)
         </div>
         <span class="spacer" />
         <Transition name="fade"><span v-if="running" class="status-pill"><span class="dot running" />运行中</span></Transition>
+        <span v-if="running && state.streaming" class="src-pill live" title="通过 SSE 实时推送">实时</span>
         <span v-if="state.historySource === 'local'" class="src-pill" title="Codex App 未连接，显示中继本地记录">本地记录</span>
         <button v-if="canCreate" class="btn ghost icon-only" title="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
       </template>
@@ -115,8 +119,9 @@ const retry = () => selectSession(state.selected)
           </div>
           <MessageItem v-for="item in items" :key="item.key" :entry="item.entry" />
           <MessageItem v-if="optimistic" key="__optimistic" :entry="optimistic" optimistic />
+          <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="pending ? elapsed : liveElapsed" />
           <Transition name="fade">
-            <div v-if="running" class="thinking">
+            <div v-if="running && !liveShown" class="thinking">
               <span class="avatar assistant"><Icon name="logo" :size="11" /></span>
               <span class="dots"><i /><i /><i /></span>
               <span>思考中…<template v-if="pending"> {{ elapsed }}s</template></span>

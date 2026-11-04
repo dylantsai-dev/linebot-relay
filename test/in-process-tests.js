@@ -17,7 +17,7 @@ Object.assign(process.env, {
   CODEX_APP_SERVER_SOCK: path.join(temp, 'missing.sock'), WEBHOOK_TOKEN: 'test-secret', DATA_DIR: path.join(temp, 'data'), WORK_DIR: path.join(temp, 'work'),
   UPLOAD_DIR: path.join(temp, 'uploads'), MAX_FILE_BYTES: '1024', MAX_FILES: '5', CONSOLE_UI: 'legacy',
   LOG_DIR: path.join(temp, 'logs'), CODEX_BIN: wrapper, CODEX_TIMEOUT_MS: '500',
-  MAX_CONCURRENCY: '2', FAKE_CODEX_STATE: path.join(temp, 'state'), CODEX_MODEL: 'test-model', EXPECT_CODEX_MODEL: 'test-model',
+  MAX_CONCURRENCY: '2', FAKE_CODEX_STATE: path.join(temp, 'state'), CODEX_HOME: path.join(temp, 'codex-home'), CODEX_MODEL: 'test-model', EXPECT_CODEX_MODEL: 'test-model',
 });
 const callbacks = [];
 const children = new Map();
@@ -69,7 +69,7 @@ function simulatedSpawn(bin, args, options) {
 function load() {
   const context = vm.createContext({
     __dirname: path.resolve(__dirname, '..'),
-    require: name => name === 'node:http' ? { createServer: callback => { handler = callback; return { listen() {} }; } } : name === 'node:child_process' ? { spawn: simulatedSpawn } : name === './lib/appserver' ? require('../lib/appserver') : name === './lib/attachments' ? require('../lib/attachments') : name === './lib/users' ? require('../lib/users') : require(name),
+    require: name => name === 'node:http' ? { createServer: callback => { handler = callback; return { listen() {} }; } } : name === 'node:child_process' ? { spawn: simulatedSpawn } : name === './lib/appserver' ? require('../lib/appserver') : name === './lib/attachments' ? require('../lib/attachments') : name === './lib/users' ? require('../lib/users') : name === './lib/media' ? require('../lib/media') : require(name),
     process: { env: process.env, exit: process.exit, kill: pid => children.get(-pid)?.close(null) }, Buffer, setTimeout, clearTimeout, AbortSignal,
     console: { log() {}, error: console.error },
     fetch: async (url, options) => { callbacks.push(JSON.parse(options.body)); return { ok: true }; },

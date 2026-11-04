@@ -1,5 +1,5 @@
 import { reactive, ref, computed, watch } from 'vue'
-import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User } from './lib/types'
+import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread } from './lib/types'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 export const MAX_FILES = 5
@@ -29,6 +29,10 @@ export const state = reactive({
   attachments: new Map<string, DraftFile[]>(),
   drawer: false,
   now: Date.now(),
+  /** In-progress turn of the selected session (streamed deltas, or the history snapshot as fallback). */
+  live: null as LiveTurn | null,
+  streaming: false,
+  lightbox: null as { src: string; alt: string } | null,
 })
 
 /* ---------- toast ---------- */
@@ -116,7 +120,8 @@ export function logout(revoke = true) {
   for (const job of state.pending.values()) for (const f of job.attachments) if (f.preview) URL.revokeObjectURL(f.preview)
   revokeBlobs()
   clearTokens()
-  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false })
+  stopStream()
+  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null })
   state.drafts.clear(); state.pending.clear()
   historySig = ''
 }
@@ -152,7 +157,9 @@ export async function selectSession(key: string) {
     state.history = []
     state.threadRunning = false
     state.historyError = ''
+    state.live = null
     historySig = ''
+    startStream(key)
   }
   state.drawer = false
   state.historyLoading = true
@@ -173,12 +180,32 @@ export async function refreshHistory(key: string) {
   if (state.selected !== key || own !== epoch) return
   state.historyError = ''
   state.historySource = data.source
+  // Polling fallback for the live turn when the stream is not connected.
+  if (!state.streaming) setLive(data.running && data.live ? data.live : null)
+  else if (!data.running && state.live && Date.now() - streamTouched > 5000) setLive(null)
   // Diff by signature: identical polls leave reactive state (and the DOM) untouched.
   const sig = JSON.stringify([data.history, !!data.running])
   if (sig === historySig) return
   historySig = sig
   state.history = data.history
   state.threadRunning = !!data.running
+}
+
+/* ---------- Codex threads: the sidebar links existing Codex sessions ---------- */
+export async function listCodexThreads(q = '', cursor = ''): Promise<{ threads: CodexThread[]; next_cursor: string | null }> {
+  const params = new URLSearchParams({ limit: '40' })
+  if (q) params.set('q', q)
+  if (cursor) params.set('cursor', cursor)
+  return api(`/api/codex/threads?${params}`)
+}
+/** Bind a key to an existing Codex thread (server verifies the thread exists). */
+export async function linkSession(key: string, codexId: string) {
+  await api(`/api/sessions/${keyPath(key)}`, { method: 'PUT', body: JSON.stringify({ codex_session_id: codexId }) })
+  state.drafts.delete(key)
+  await refreshSessions()
+  historySig = ''
+  if (state.selected === key) await refreshHistory(key).catch(() => {})
+  else await selectSession(key)
 }
 
 export function createSession(key: string, codexId: string | null) {
@@ -190,7 +217,7 @@ export async function deleteSession(key: string) {
   if (state.sessions.some(s => s.key === key) || state.pending.has(key)) await api(`/api/sessions/${keyPath(key)}`, { method: 'DELETE' })
   state.drafts.delete(key)
   discardAttachments(key)
-  if (state.selected === key) { state.selected = ''; state.history = []; state.threadRunning = false; historySig = '' }
+  if (state.selected === key) { state.selected = ''; state.history = []; state.threadRunning = false; state.live = null; historySig = ''; stopStream() }
   await refreshSessions()
 }
 
@@ -289,7 +316,104 @@ export async function refreshLogs() {
   finally { logs.loading = false }
 }
 
-/* ---------- polling: sessions 5s, history 3s, pending clock 1s ---------- */
+/* ---------- live stream: SSE over fetch (Authorization header), reconnects with backoff ---------- */
+let streamAbort: AbortController | null = null, streamKey = '', streamTouched = 0, streamRetry: number | undefined
+let liveBuf: LiveTurn | null = null, liveTimer: number | undefined
+function setLive(turn: LiveTurn | null) {
+  liveBuf = turn ? { ...turn, items: turn.items.map(item => ({ ...item })) } : null
+  clearTimeout(liveTimer); liveTimer = undefined
+  state.live = liveBuf ? { ...liveBuf, items: liveBuf.items.map(item => ({ ...item })) } : null
+}
+// Deltas arrive many times a second; copy the buffer into reactive state at most every 100 ms.
+function commitLive() {
+  if (liveTimer !== undefined) return
+  liveTimer = window.setTimeout(() => {
+    liveTimer = undefined
+    state.live = liveBuf ? { ...liveBuf, items: liveBuf.items.map(item => ({ ...item })) } : null
+  }, 100)
+}
+function liveItem(id: string, init: Partial<LiveItem>): LiveItem {
+  if (!liveBuf) liveBuf = { turnId: '', startedAt: new Date().toISOString(), items: [] }
+  let item = liveBuf.items.find(i => i.id === id)
+  if (!item) { item = { id, kind: 'other', ...init } as LiveItem; liveBuf.items.push(item) }
+  return item
+}
+function onStreamEvent(key: string, name: string, data: any) {
+  if (state.selected !== key) return
+  streamTouched = Date.now()
+  if (name === 'snapshot') {
+    setLive(data.live || null)
+    if (data.running) state.threadRunning = true
+  } else if (name === 'turn') {
+    if (data.status === 'started') { setLive({ turnId: data.turnId || '', startedAt: new Date().toISOString(), items: [] }); state.threadRunning = true }
+    else {
+      setLive(null)
+      historySig = ''
+      void refreshHistory(key).catch(() => {})
+      void refreshSessions().catch(() => {})
+    }
+  } else if (name === 'item') {
+    const item = liveItem(data.item.id, data.item)
+    Object.assign(item, data.item)
+    state.threadRunning = true
+    commitLive()
+  } else if (name === 'delta') {
+    const item = liveItem(data.id, { kind: data.kind, text: '' }) as any
+    item[data.field] = (item[data.field] || '') + data.delta
+    if (data.field === 'output' && item.output.length > 4000) item.output = item.output.slice(-4000)
+    commitLive()
+  }
+}
+export function stopStream() {
+  clearTimeout(streamRetry); streamRetry = undefined
+  streamAbort?.abort(); streamAbort = null; streamKey = ''
+  state.streaming = false
+}
+function startStream(key: string, attempt = 0) {
+  stopStream()
+  if (!key || !state.token) return
+  const own = epoch, abort = new AbortController()
+  streamAbort = abort; streamKey = key
+  const retry = () => {
+    if (abort.signal.aborted || own !== epoch || state.selected !== key) return
+    state.streaming = false
+    streamRetry = window.setTimeout(() => startStream(key, attempt + 1), Math.min(30000, 1000 * 2 ** Math.min(attempt, 5)))
+  }
+  void (async () => {
+    try {
+      const response = await fetch(`/api/sessions/${keyPath(key)}/stream`, { headers: { Authorization: `Bearer ${state.token}`, Accept: 'text/event-stream' }, cache: 'no-store', signal: abort.signal })
+      if (!response.ok || !response.body) { if (response.status === 401 && state.authed) { logout(false); toast('登录已失效，请重新登录'); return } retry(); return }
+      state.streaming = true
+      attempt = 0
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+      let buffer = ''
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += value
+        let cut
+        while ((cut = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, cut); buffer = buffer.slice(cut + 2)
+          let name = 'message', data = ''
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) name = line.slice(6).trim()
+            else if (line.startsWith('data:')) data += line.slice(5).trim()
+          }
+          if (block.startsWith(':')) { streamTouched = Date.now(); continue }
+          if (data) { try { onStreamEvent(key, name, JSON.parse(data)) } catch { /* ignore malformed */ } }
+        }
+      }
+      retry()
+    } catch { retry() }
+  })()
+}
+// A stream silently stalled by a proxy: no heartbeat for 45 s -> reconnect.
+function checkStream() {
+  if (state.selected && state.authed && (!streamAbort || streamKey !== state.selected)) startStream(state.selected)
+  else if (state.streaming && Date.now() - streamTouched > 45000) startStream(state.selected)
+}
+
+/* ---------- polling: sessions 5s, history 3s (15s while streaming), pending clock 1s ---------- */
 const timers: number[] = []
 function startPolling() {
   stopPolling()
@@ -298,10 +422,14 @@ function startPolling() {
     refreshSessions().catch(e => (state.sessionsError = e.message))
     if (state.tab === 'logs' && logs.auto) void refreshLogs()
   }, 5000))
+  let ticks = 0
   timers.push(window.setInterval(() => {
-    if (state.token && state.selected && !document.hidden) refreshHistory(state.selected).catch(e => (state.historyError = e.message))
+    if (!state.token || !state.selected || document.hidden) return
+    checkStream()
+    if (state.streaming && ++ticks % 5) return
+    refreshHistory(state.selected).catch(e => (state.historyError = e.message))
   }, 3000))
-  timers.push(window.setInterval(() => { if (state.pending.size && !document.hidden) state.now = Date.now() }, 1000))
+  timers.push(window.setInterval(() => { if ((state.pending.size || state.live) && !document.hidden) state.now = Date.now() }, 1000))
 }
 function stopPolling() { while (timers.length) clearInterval(timers.pop()) }
 

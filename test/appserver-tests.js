@@ -50,10 +50,10 @@ function loadRelay() {
   }
   const env = {
     WEBHOOK_TOKEN: 'test-token', CODEX_APP_SERVER_SOCK: socketPath, CODEX_TIMEOUT_MS: '80', CODEX_MODEL: 'test-model',
-    UPLOAD_DIR: path.join(temp, 'uploads'), DATA_DIR: path.join(temp, 'data'), WORK_DIR: path.join(temp, 'work'), LOG_DIR: path.join(temp, 'logs'),
+    CODEX_HOME: path.join(temp, 'codex-home'), STREAM_HEARTBEAT_MS: '50', UPLOAD_DIR: path.join(temp, 'uploads'), DATA_DIR: path.join(temp, 'data'), WORK_DIR: path.join(temp, 'work'), LOG_DIR: path.join(temp, 'logs'),
   };
   const context = vm.createContext({
-    __dirname: path.resolve(__dirname, '..'), Buffer, setTimeout, clearTimeout, AbortSignal,
+    __dirname: path.resolve(__dirname, '..'), Buffer, setTimeout, clearTimeout, setInterval, clearInterval, AbortSignal, URLSearchParams,
     console: { log() {}, error: console.error },
     process: { env },
     require: name => {
@@ -62,6 +62,7 @@ function loadRelay() {
       if (name === 'node:child_process') return { spawn() { spawnCount++; throw new Error('EXEC_FALLBACK'); } };
       if (name === './lib/attachments') return require('../lib/attachments');
       if (name === './lib/users') return require('../lib/users');
+      if (name === './lib/media') return require('../lib/media');
       return require(name);
     },
   });
@@ -83,6 +84,36 @@ function post(session, message, codex_session_id, extra = {}) {
       req.emit('end');
     });
   });
+}
+
+function api(method, route, body) {
+  return new Promise((resolve, reject) => {
+    const req = new EventEmitter();
+    Object.assign(req, { url: route, method, headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' } });
+    const res = { writeHead(status) { this.status = status; }, end(text) { resolve({ status: this.status, body: JSON.parse(text) }); } };
+    handler(req, res).catch(reject);
+    queueMicrotask(() => { if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); });
+  });
+}
+
+// SSE over a mock response: collects parsed events until closed.
+function stream(route) {
+  const req = new EventEmitter();
+  Object.assign(req, { url: route, method: 'GET', headers: { authorization: 'Bearer test-token' } });
+  const events = [], raw = [];
+  const res = new EventEmitter();
+  Object.assign(res, { destroyed: false, writeHead(status, headers) { this.status = status; this.headers = headers; },
+    write(text) {
+      raw.push(text);
+      for (const block of text.split('\n\n')) {
+        const name = block.match(/^event: (.*)$/m)?.[1], data = block.match(/^data: (.*)$/m)?.[1];
+        if (name && data) events.push({ name, data: JSON.parse(data) });
+      }
+      return true;
+    },
+    end() { this.ended = true; } });
+  handler(req, res);
+  return { res, events, raw, close: () => req.emit('close') };
 }
 
 function get(route) {
@@ -310,6 +341,112 @@ async function main() {
   fake.rejectInitialize = false;
   await pause(50);
   assert.equal((await post('one', 'after-handshake-failure')).body.reply, 'reply:after-handshake-failure');
+
+  // ----- Fix 1: sessions only link existing Codex threads -----
+  const ghost = '01a1a610-dead-7000-8000-000000000000';
+  const turnStarts = () => fake.requests.filter(r => r.method === 'turn/start').length;
+  const startsBefore = turnStarts();
+  const missing = await post('ghost', 'hi', ghost);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.body.error, 'Codex 里没有这个会话 ID');
+  assert.equal((await post('ghost', 'hi', 'not-a-uuid-at-all')).status, 400);
+  assert.equal(turnStarts(), startsBefore);
+  assert.equal((await get('/api/sessions')).body.sessions.some(s => s.key === 'ghost'), false);
+  assert.equal(fs.existsSync(path.join(temp, 'data/history/ghost.jsonl')), false);
+  // Re-binding an existing key to a missing thread keeps the old binding.
+  const oneBinding = (await get('/api/sessions')).body.sessions.find(s => s.key === 'one').codex_session_id;
+  assert.equal((await post('one', 'x', ghost)).status, 404);
+  assert.equal((await get('/api/sessions')).body.sessions.find(s => s.key === 'one').codex_session_id, oneBinding);
+  // Admin bind without sending.
+  assert.equal((await api('PUT', '/api/sessions/ghost', { codex_session_id: ghost })).status, 404);
+  assert.equal((await api('PUT', '/api/sessions/ghost', { codex_session_id: 'abc' })).status, 400);
+  assert.equal((await get('/api/sessions')).body.sessions.some(s => s.key === 'ghost'), false);
+  const bound = await api('PUT', '/api/sessions/linked', { codex_session_id: seedId });
+  assert.equal(bound.status, 201);
+  assert.equal(bound.body.session.codex_session_id, seedId);
+  assert.equal((await api('PUT', '/api/sessions/linked', { codex_session_id: seedId })).status, 200);
+  assert.ok((await get('/api/sessions/linked/history')).body.history.some(e => e.text === 'from App at startup'));
+  assert.equal(turnStarts(), startsBefore);
+  // Rollout file fallback when the app-server does not know the thread.
+  const archived = '01a1a610-beef-7000-8000-000000000001';
+  fs.mkdirSync(path.join(temp, 'codex-home/archived_sessions'), { recursive: true });
+  fs.writeFileSync(path.join(temp, `codex-home/archived_sessions/rollout-2026-01-01T00-00-00-${archived}.jsonl`), '');
+  assert.equal((await api('PUT', '/api/sessions/from-rollout', { codex_session_id: archived })).status, 201);
+  assert.equal((await api('DELETE', '/api/sessions/from-rollout')).status, 200);
+  // Thread picker.
+  const picker = await get('/api/codex/threads?q=');
+  assert.equal(picker.status, 200);
+  const seedRow = picker.body.threads.find(t => t.id === seedId);
+  assert.deepEqual(seedRow.linked.sort(), ['linked', 'seeded']);
+  assert.equal(seedRow.cwd, '/tmp/fake-cwd');
+  assert.match(seedRow.updated_at, /^20\d\d-/);
+  assert.deepEqual(fake.lastList.sourceKinds, ['cli', 'vscode', 'exec', 'appServer']);
+  assert.equal(fake.lastList.sortKey, 'updated_at');
+
+  // ----- Fix 2: generated images become signed, servable URLs -----
+  const pics = await post('pics', 'first');
+  const picsId = pics.body.codex_session_id;
+  const imageDir = path.join(temp, 'codex-home/generated_images', picsId);
+  fs.mkdirSync(imageDir, { recursive: true });
+  fake.imagePath = path.join(imageDir, 'cat.png');
+  fs.writeFileSync(fake.imagePath, Buffer.from([137,80,78,71,13,10,26,10,1,2,3]));
+  await post('pics', '__image__');
+  const workFile = path.join(temp, 'work/pics/chart.png');
+  fs.mkdirSync(path.dirname(workFile), { recursive: true });
+  fs.writeFileSync(workFile, Buffer.from([137,80,78,71,13,10,26,10]));
+  await post('pics', `see ![chart](${workFile}) and ![bad](/etc/passwd)`);
+  const picHistory = (await get('/api/sessions/pics/history')).body.history;
+  const generated = picHistory.find(e => e.role === 'assistant' && e.images?.length);
+  assert.ok(generated, 'imageGeneration item surfaces as an image');
+  assert.match(generated.images[0].url, /^\/api\/media\/cat\.png\?p=/);
+  assert.equal(generated.images[0].path, undefined);
+  assert.equal(JSON.stringify(picHistory).includes('iVBORw0KGgo='), false, 'base64 result is not inlined');
+  const verify = url => vm.runInContext(`media.verify(new URLSearchParams(${JSON.stringify(url.split('?')[1])}))`, relayContext);
+  assert.equal(verify(generated.images[0].url).file, fake.imagePath);
+  assert.equal(verify(generated.images[0].url).key, 'pics');
+  assert.equal(verify(generated.images[0].url.replace(/s=[^&]+/, 's=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')), null);
+  const markdown = picHistory.filter(e => e.role === 'assistant').at(-1).text;
+  assert.match(markdown, /!\[chart\]\(\/api\/media\/chart\.png\?p=/);
+  assert.match(markdown, /!\[bad\]\(\/etc\/passwd\)/, 'paths outside the session roots stay unsigned');
+
+  // ----- Fix 3: live streaming of App-started turns -----
+  const live = stream('/api/sessions/linked/stream');
+  assert.equal(live.res.status, 200);
+  assert.equal(live.res.headers['X-Accel-Buffering'], 'no');
+  assert.match(live.res.headers['Content-Type'], /text\/event-stream/);
+  assert.equal(live.events[0].name, 'snapshot');
+  assert.equal(live.events[0].data.running, false);
+  fake.streamDelay = 150;
+  fake.handle({ id: 'stream-turn', method: 'turn/start', params: { threadId: seedId, input: [{ type: 'text', text: '__stream__' }] } }, appFixture, () => {});
+  await pause(100);
+  const midText = live.events.filter(e => e.name === 'delta').map(e => e.data.delta).join('');
+  assert.equal(midText, '**Hel');
+  assert.ok(live.events.some(e => e.name === 'item' && e.data.item.kind === 'text'));
+  const mid = (await get('/api/sessions/linked/history')).body;
+  assert.equal(mid.running, true);
+  assert.equal(mid.live.items.find(i => i.kind === 'text').text, '**Hel', 'history carries the live buffer for polling clients');
+  const late = stream('/api/sessions/linked/stream');
+  assert.equal(late.events[0].data.live.items.find(i => i.kind === 'text').text, '**Hel', 'late joiners get a snapshot');
+  late.close();
+  await pause(500);
+  const names = live.events.map(e => e.name);
+  assert.ok(names.includes('turn'));
+  assert.equal(live.events.filter(e => e.name === 'delta' && e.data.kind === 'text').map(e => e.data.delta).join(''), '**Hello**');
+  // Replaying events like the console does must not duplicate text (item snapshots are taken at emit time).
+  const replay = new Map();
+  for (const e of live.events) {
+    if (e.name === 'item') replay.set(e.data.item.id, { ...(replay.get(e.data.item.id) || {}), ...e.data.item });
+    if (e.name === 'delta') { const item = replay.get(e.data.id) || {}; item[e.data.field] = (item[e.data.field] || '') + e.data.delta; replay.set(e.data.id, item); }
+  }
+  assert.equal([...replay.values()].find(i => i.kind === 'text').text, '**Hello**');
+  const command = live.events.filter(e => e.name === 'item' && e.data.item.kind === 'command').at(-1).data.item;
+  assert.equal(command.title, 'ls -la');
+  assert.equal(command.exitCode, 0);
+  assert.equal(live.events.filter(e => e.name === 'turn').at(-1).data.status, 'completed');
+  assert.ok(live.raw.some(text => text.startsWith(': ping')), 'heartbeat comment lines');
+  assert.equal(client.threadState(seedId).live, null);
+  live.close();
+  assert.equal(client.liveListeners.size, 0);
 
   // Failure before any turn is sent may use exec, including backoff calls.
   client.close();

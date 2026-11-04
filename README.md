@@ -19,6 +19,8 @@ node server.js
 | LOG_DIR | /opt/linebot-relay/logs |
 | MAX_CONCURRENCY | 2 |
 | CODEX_TIMEOUT_MS | 600000 |
+| CODEX_HOME | /root/.codex（驗證會話 ID 的 rollout 檔與生成圖片目錄） |
+| STREAM_HEARTBEAT_MS | 15000（SSE 心跳） |
 | CODEX_MODEL | 不指定（設定時用於新 app-server thread 或 CLI 的 -m） |
 | CODEX_APP_SERVER_SOCK | /root/.codex/app-server-control/app-server-control.sock（設為 off 停用） |
 
@@ -31,7 +33,7 @@ curl http://127.0.0.1:8790/webhook \
 curl http://127.0.0.1:8790/sessions -H "Authorization: Bearer $WEBHOOK_TOKEN"
 ```
 
-相同 `session` 會依收到的順序續接既有 Codex 工作階段；可加入 `codex_session_id` 綁定既有 ID。成功回傳 `{session,codex_session_id,reply}`。加入 `callback_url`（HTTP/HTTPS）時立即回傳 202，完成後 POST 相同結果；失敗回呼為 `{session,error}`，回呼逾時為 15 秒，不自動重試。同步錯誤回傳 500，CLI 逾時回傳 504。無附件的 JSON 本文上限為 1 MiB。
+相同 `session` 會依收到的順序續接既有 Codex 工作階段；可加入 `codex_session_id` 綁定既有 ID（必須是 UUID，且在 Codex 中確實存在：先以 app-server `thread/read` 驗證，否則查 `$CODEX_HOME/sessions` 下的 rollout 檔；不存在回 404「Codex 里没有这个会话 ID」，不會建立會話）。不帶 `codex_session_id` 時仍會自動建立新會話。成功回傳 `{session,codex_session_id,reply}`。加入 `callback_url`（HTTP/HTTPS）時立即回傳 202，完成後 POST 相同結果；失敗回呼為 `{session,error}`，回呼逾時為 15 秒，不自動重試。同步錯誤回傳 500，CLI 逾時回傳 504。無附件的 JSON 本文上限為 1 MiB。
 
 工作目錄以 session 命名，冒號改為底線，`.` 與 `..` 會安全轉碼；因此請避免使用只有冒號／底線差異的不同 key。不同 key 綁定同一個 Codex ID 時仍各自排隊，請由呼叫端避免同時操作該 ID。
 
@@ -100,7 +102,11 @@ npm run build      # 輸出 web/dist，server.js 會自動在 /console 提供
 | --- | --- |
 | `GET /api/whoami` | `{ok:true}`，檢查登入 |
 | `GET /api/sessions` | `{sessions:[{key,codex_session_id,messages,created_at,updated_at,status,queued}]}`，依最後更新排序，含尚未完成首次執行的會話 |
-| `GET /api/sessions/:key/history?limit=200` | `{key,session,history:[...],source,revision?,running}`，由舊到新；key 需 URL 編碼，上限 550 |
+| `GET /api/sessions/:key/history?limit=200` | `{key,session,history:[...],source,revision?,running,live?}`，由舊到新；key 需 URL 編碼，上限 550。助手訊息可含 `images:[{name,url,source,prompt?}]`（簽名 `/api/media` 網址），回覆中的本機圖片連結會改寫為簽名網址；執行中時 `live` 為目前回合的即時內容（串流不可用時的輪詢備援） |
+| `PUT /api/sessions/:key` | 僅管理員：`{codex_session_id}` 把 key 關聯到 Codex 中**已存在**的會話（不送訊息）；新建 201、已存在 200；ID 不是 UUID 回 400，Codex 裡沒有這個會話 ID 回 404 且不建立任何東西，執行中 409 |
+| `GET /api/codex/threads?q=&cursor=&limit=40` | 僅管理員：列出 Codex 已有會話供「新建會話」選擇，`{threads:[{id,title,preview,updated_at,created_at,cwd,status,source,linked:[key]}],next_cursor}`；app-server 未連線時 503 |
+| `GET /api/sessions/:key/stream` | Server-Sent Events（以 fetch + `Authorization` 讀取）：`snapshot`（`{running,live}`）、`item`、`delta`（`{id,field,delta,kind}`）、`turn`（started/completed）；每 15 秒 `: ping` 心跳並重新驗證登入與授權；回應帶 `X-Accel-Buffering: no`。Codex App 發起的回合也會即時推送 |
+| `GET /api/media/:name?p=&k=&u=&e=&s=` | 圖片（生成圖片、imageView、回覆中引用的本機圖片）的簽名網址，免 Authorization 以便 `<img>` 使用；只簽發會話允許目錄內的真實圖片檔（工作目錄、上傳目錄、`$CODEX_HOME/generated_images/<thread>`、會話 cwd），拒絕符號連結逃逸與 `../`；取用時重新檢查使用者是否停用、授權是否仍在；6–12 小時過期 |
 | `DELETE /api/sessions/:key` | `{ok:true}`；未知會話 404，執行中或排隊中 409；僅移除映射與歷史，不刪除 Codex 檔案或工作目錄 |
 | `POST /api/send` | `{session,message,codex_session_id?}`；共用 webhook 排隊、驗證、並行及逾時邏輯，等待完成後回傳 `{session,codex_session_id,reply}`，不使用回呼模式 |
 | `GET /api/requests?limit=100` | `{requests:[...]}`，由新到舊，上限 500 |

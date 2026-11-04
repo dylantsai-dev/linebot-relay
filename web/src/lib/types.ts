@@ -26,8 +26,15 @@ export interface HistoryEntry {
   duration_ms?: number
   codex_session_id?: string
   attachments?: Attachment[]
+  /** Images produced by thread items (image generation, image views, tool output): signed URLs. */
+  images?: MediaImage[]
 }
-export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number }
+export interface MediaImage { name: string; kind?: 'image'; url: string; source?: 'generated' | 'view' | 'tool'; prompt?: string }
+export type LiveKind = 'text' | 'reasoning' | 'plan' | 'command' | 'tool' | 'search' | 'file' | 'image' | 'other'
+export interface LiveItem { id: string; kind: LiveKind; done?: boolean; text?: string; title?: string; status?: string; exitCode?: number | null; output?: string; url?: string; phase?: string }
+export interface LiveTurn { turnId: string; startedAt: string; items: LiveItem[] }
+export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; live?: LiveTurn }
+export interface CodexThread { id: string; title: string; preview: string; updated_at: string | null; created_at: string | null; cwd: string | null; status: string | null; source: string | null; linked: string[] }
 export interface Stats { today: { calls: number; failures: number; avg_duration_ms: number }; total_sessions: number; running: number; queued: number; uptime_s: number; scope?: 'granted' }
 export interface RequestRow { time: string; request_id: string; session: string | null; source: string; method: string; path: string; status: number | string; ok: boolean; duration_ms: number; error: string | null }
 export interface DraftFile { id: number; file: File; name: string; size: number; mime: string; kind: 'image' | 'file'; preview: string | null }

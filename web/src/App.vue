@@ -7,6 +7,7 @@ import SessionsView from './components/SessionsView.vue'
 import LogsView from './components/LogsView.vue'
 import DocsView from './components/DocsView.vue'
 import ToastBar from './components/ToastBar.vue'
+import Lightbox from './components/Lightbox.vue'
 import UsersView from './components/UsersView.vue'
 import SetupBanner from './components/SetupBanner.vue'
 onMounted(restoreLogin)
@@ -25,4 +26,5 @@ onMounted(restoreLogin)
     </main>
   </div>
   <ToastBar />
+  <Lightbox />
 </template>

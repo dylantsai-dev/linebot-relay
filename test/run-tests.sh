@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 node test/attachments-tests.js
+node test/media-tests.js
 node test/console-dist-tests.js
 node test/users-tests.js
 node test/in-process-tests.js
@@ -43,7 +44,7 @@ async function main() {
   fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(path.join(root, 'test/fake-codex.js'))} "$@"\n`, { mode: 0o755 });
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
-  const env = { ...process.env, CODEX_APP_SERVER_SOCK: 'off', WEBHOOK_TOKEN: token, HOST: '127.0.0.1', PORT: String(port), CODEX_BIN: wrapper, DATA_DIR: path.join(temp, 'data'), WORK_DIR: path.join(temp, 'work'), LOG_DIR: path.join(temp, 'logs'), FAKE_CODEX_STATE: path.join(temp, 'state'), MAX_CONCURRENCY: '2', CODEX_TIMEOUT_MS: '1500', CODEX_MODEL: 'fake-model', EXPECT_CODEX_MODEL: 'fake-model' };
+  const env = { ...process.env, CODEX_APP_SERVER_SOCK: 'off', WEBHOOK_TOKEN: token, HOST: '127.0.0.1', PORT: String(port), CODEX_BIN: wrapper, DATA_DIR: path.join(temp, 'data'), WORK_DIR: path.join(temp, 'work'), LOG_DIR: path.join(temp, 'logs'), FAKE_CODEX_STATE: path.join(temp, 'state'), CODEX_HOME: path.join(temp, 'codex-home'), MAX_CONCURRENCY: '2', CODEX_TIMEOUT_MS: '1500', CODEX_MODEL: 'fake-model', EXPECT_CODEX_MODEL: 'fake-model' };
   async function start() {
     server = spawn(process.execPath, ['server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     server.stdout.on('data', data => { diagnostics += data; });

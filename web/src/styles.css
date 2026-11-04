@@ -464,3 +464,57 @@ button.chip:hover:not(:disabled) { background: var(--bg-hover); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 .endpoint { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-subtle); overflow: auto; }
 .endpoint code { border: 0; background: none; padding: 0; white-space: nowrap; }
+
+/* ---- images: reply thumbnails, generated images, lightbox ---- */
+.md img.md-img { display: block; max-width: min(100%, 360px); max-height: 320px; height: auto; margin: 6px 0 10px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-muted); cursor: zoom-in; object-fit: contain; }
+.gen-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.gen-image { padding: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-muted); cursor: zoom-in; overflow: hidden; line-height: 0; transition: border-color .12s, transform .12s; }
+.gen-image:hover { border-color: var(--accent-line); }
+.gen-image img { display: block; width: auto; height: auto; max-width: min(260px, 70vw); max-height: 260px; object-fit: contain; }
+.att-image { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 48px 24px 24px; background: color-mix(in srgb, #000 78%, transparent); backdrop-filter: blur(4px); cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: calc(100vh - 80px); border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.45); cursor: default; background: #fff; }
+.lightbox-bar { position: fixed; top: 12px; right: 12px; display: flex; gap: 6px; }
+
+/* ---- live turn ---- */
+.live-turn { border-top: 1px solid var(--line); padding-top: 14px; }
+.badge.live { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.src-pill.live { color: var(--accent); border-color: var(--accent-line); border-style: solid; }
+.activity { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.act { display: grid; grid-template-columns: 16px auto 1fr auto; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.act.commentary { display: block; font-style: italic; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-icon { display: grid; place-items: center; color: var(--faint); }
+.act-kind { font-size: 11px; color: var(--faint); }
+.act-title { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; background: none; border: 0; padding: 0; }
+.act-state { font-size: 11px; color: var(--accent); }
+.act.done .act-state { color: var(--muted); }
+.act.done.failed .act-state { color: var(--red); }
+.act-output { grid-column: 2 / -1; margin: 0; padding: 6px 8px; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--muted); background: var(--bg-subtle); border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow: hidden; max-height: 64px; }
+.typing { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.md.streaming > :last-child::after { content: ""; display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--accent); border-radius: 1px; animation: blink 1s steps(2) infinite; }
+
+/* ---- new-session picker ---- */
+.dialog.new-dialog { width: min(560px, calc(100% - 24px)); max-height: calc(100dvh - 32px); overflow: auto; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; margin: 12px 0 4px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--bg-subtle); }
+.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.seg button.on { background: var(--bg); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
+.picker-search { position: relative; display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--faint); }
+.picker-search > .icon { position: absolute; left: 10px; pointer-events: none; }
+.picker-search .input { padding-left: 30px; }
+.picker { margin-top: 8px; max-height: 280px; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--bg); }
+.picker-empty { display: flex; align-items: center; gap: 8px; justify-content: center; padding: 22px 12px; color: var(--muted); font-size: 12.5px; }
+.picker-empty.error { color: var(--red); }
+.thread-row { display: grid; gap: 2px; width: 100%; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
+.thread-row:last-of-type { border-bottom: 0; }
+.thread-row:hover { background: var(--bg-hover); }
+.thread-row.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.t-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.t-title { flex: 1; min-width: 0; font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-time { flex: none; font-size: 11px; color: var(--faint); }
+.t-preview { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10.5px; color: var(--faint); min-width: 0; }
+.t-cwd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.t-badge { padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--muted); }
+.t-badge.run { color: var(--accent); border-color: var(--accent-line); }
+.picker-more { display: flex; margin: 8px auto; }
+.blank-hint { margin: 10px 0 0; color: var(--muted); }

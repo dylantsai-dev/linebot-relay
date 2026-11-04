@@ -34,6 +34,12 @@ process.stdin.on('data', chunk => { prompt += chunk; });
 process.stdin.on('end', async () => {
   const emit = event => process.stdout.write(JSON.stringify(event) + '\n');
   emit({ type: 'thread.started', thread_id: id });
+  // Like the real CLI, a new thread gets a rollout file under CODEX_HOME/sessions.
+  if (!resume && process.env.CODEX_HOME) {
+    const dir = path.join(process.env.CODEX_HOME, 'sessions', '2026', '01', '01');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `rollout-2026-01-01T00-00-00-${id}.jsonl`), '');
+  }
   if (prompt === '__active_writer__') { console.error('thread-store conflict: thread already has an active writer (code -32600)'); process.exitCode = 3; return; }
   if (prompt === '__active_writer_event__') { emit({ type: 'error', message: 'thread already has an active writer (code -32600)' }); return; }
   if (prompt === '__timeout__') { setInterval(() => {}, 1000); return; }
