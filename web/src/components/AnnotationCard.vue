@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Review card for text selected on an assistant reply — 「加到 Agent.md」persists it as project guidance.
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import Icon from './Icon.vue'
 
 export interface AnnotationItem {
