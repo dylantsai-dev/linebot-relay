@@ -848,3 +848,27 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .older-row { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; margin-bottom: 4px; font-size: 12px; color: var(--faint); }
 .older-row button { border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
 .older-row button:hover { color: var(--ink); background: var(--bg-hover); }
+
+/* User avatars (Feishu / letter) */
+.user-avatar.has-img { padding: 0; overflow: hidden; background: transparent; color: transparent; }
+.user-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; }
+.badge.feishu-badge { color: #3370ff; border-color: color-mix(in srgb, #3370ff 28%, transparent); background: color-mix(in srgb, #3370ff 10%, transparent); }
+.u-handle { margin-left: 4px; font-weight: 400; }
+
+/* Feishu login button + divider */
+.feishu-btn { background: #3370ff; color: #fff; border-color: #3370ff; justify-content: center; margin-top: 4px; }
+.feishu-btn:hover { filter: brightness(1.05); }
+.feishu-btn .icon { color: #fff; }
+.login-or { display: flex; align-items: center; gap: 12px; margin: 16px 0 4px; color: var(--faint); font-size: 12px; }
+.login-or::before, .login-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.login-or span { white-space: nowrap; }
+
+/* Admin Feishu settings card on Users page */
+.settings-card { margin: 0 0 18px; padding: 18px 18px 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.settings-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.settings-card-head h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 16px; font-weight: 500; }
+.settings-card-head .muted { margin: 0; font-size: 12.5px; }
+.feishu-form { display: flex; flex-direction: column; gap: 0; max-width: 560px; }
+.feishu-form .field-label { margin-top: 10px; }
+.feishu-form .check { margin: 14px 0 6px; }
+.feishu-actions { justify-content: flex-start; margin-top: 8px; padding-top: 0; }

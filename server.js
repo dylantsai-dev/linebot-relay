@@ -9,6 +9,8 @@ const { URL } = require('node:url');
 const { AppServer, summarizeItem } = require('./lib/appserver');
 const { readRequest, prepareAttachments, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
+const { Settings } = require('./lib/settings');
+const feishu = require('./lib/feishu');
 const { Media, rewriteMarkdown, itemImages, localPath } = require('./lib/media');
 
 function positiveInteger(name, fallback) {
@@ -48,6 +50,10 @@ try {
 const authHash = crypto.createHash('sha256').update(`Bearer ${process.env.WEBHOOK_TOKEN}`).digest();
 const media = new Media(process.env.WEBHOOK_TOKEN);
 const users = new Users(path.resolve(process.env.USERS_DB || path.join(config.data, 'users.db')));
+const settings = new Settings(path.resolve(process.env.SETTINGS_FILE || path.join(config.data, 'settings.json')));
+const feishuStateSecret = crypto.createHash('sha256').update(`feishu-state:${process.env.WEBHOOK_TOKEN}`).digest();
+const FEISHU_COOKIE = 'feishu_oauth';
+const DEFAULT_FEISHU_REDIRECT = 'https://linebot.dylantsai.com/api/auth/feishu/callback';
 // Optional first-admin seed; ignored once any admin exists.
 async function seedAdmin() {
   const username = process.env.ADMIN_USERNAME, password = process.env.ADMIN_PASSWORD;
@@ -844,9 +850,118 @@ function readJson(req, limit = 65536) {
   });
 }
 function principalInfo(principal) {
+  const u = principal.user;
   return { ok: true, auth: principal.kind, role: principal.admin ? 'admin' : 'user',
-    user: principal.user ? { id: principal.user.id, username: principal.user.username, role: principal.user.role, last_login_at: principal.user.last_login_at } : null,
+    user: u ? {
+      id: u.id, username: u.username, role: u.role, last_login_at: u.last_login_at,
+      avatar_url: u.avatar_url || '', display_name: u.display_name || '',
+      auth_provider: u.auth_provider || 'password', has_password: !!u.has_password,
+    } : null,
     needs_setup: !users.hasAdmin() };
+}
+function parseCookies(header) {
+  const out = Object.create(null);
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+function signFeishuPending(pending) {
+  const body = Buffer.from(JSON.stringify(pending)).toString('base64url');
+  const sig = crypto.createHmac('sha256', feishuStateSecret).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+function verifyFeishuPending(raw) {
+  const text = String(raw || '');
+  const dot = text.lastIndexOf('.');
+  if (dot < 1) return null;
+  const body = text.slice(0, dot), sig = text.slice(dot + 1);
+  const expect = crypto.createHmac('sha256', feishuStateSecret).update(body).digest('base64url');
+  const a = Buffer.from(sig), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const pending = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!pending || typeof pending.state !== 'string' || typeof pending.ts !== 'number') return null;
+    return pending;
+  } catch { return null; }
+}
+function feishuRedirectUri(req) {
+  const configured = settings.feishu().redirect_uri;
+  if (configured) return configured;
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  if (!host) return DEFAULT_FEISHU_REDIRECT;
+  const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() || 'https';
+  return `${proto}://${host}/api/auth/feishu/callback`;
+}
+function safeConsoleNext(nextUrl) {
+  const fallback = '/console/';
+  if (typeof nextUrl !== 'string' || !nextUrl.startsWith('/') || nextUrl.startsWith('//')) return fallback;
+  if (nextUrl.startsWith('/api/') || nextUrl.startsWith('/auth/')) return fallback;
+  return nextUrl.slice(0, 200) || fallback;
+}
+function redirect(res, location, extraHeaders = {}) {
+  res.writeHead(302, { Location: location, ...extraHeaders });
+  res.end();
+}
+function cookieSecureFlag(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return proto === 'https' || process.env.FEISHU_COOKIE_SECURE === '1' ? '; Secure' : '';
+}
+function clearFeishuCookie(req) {
+  return `${FEISHU_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${cookieSecureFlag(req)}`;
+}
+function setFeishuCookie(req, value) {
+  return `${FEISHU_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${feishu.STATE_TTL}${cookieSecureFlag(req)}`;
+}
+function feishuErrorRedirect(key) {
+  return `/console/?feishu_error=${encodeURIComponent(key || 'token_failed')}`;
+}
+async function handleFeishuLogin(req, res, url) {
+  if (!feishu.enabled(settings)) { redirect(res, feishuErrorRedirect('disabled')); return; }
+  const nextUrl = safeConsoleNext(url.searchParams.get('next') || '/console/');
+  const redirectUri = feishuRedirectUri(req);
+  let authorize;
+  try { authorize = feishu.buildAuthorize(settings, redirectUri, nextUrl); }
+  catch (error) {
+    if (error instanceof feishu.FeishuLoginError) { redirect(res, feishuErrorRedirect(error.key)); return; }
+    throw error;
+  }
+  redirect(res, authorize.url, { 'Set-Cookie': setFeishuCookie(req, signFeishuPending(authorize.pending)) });
+}
+async function handleFeishuCallback(req, res, url) {
+  const cookies = parseCookies(req.headers.cookie);
+  const pending = verifyFeishuPending(cookies[FEISHU_COOKIE]);
+  const state = url.searchParams.get('state') || '';
+  const code = url.searchParams.get('code') || '';
+  const clear = { 'Set-Cookie': clearFeishuCookie(req) };
+  const now = Math.floor(Date.now() / 1000);
+  let stateOk = false;
+  try {
+    const a = Buffer.from(String(pending?.state || ''));
+    const b = Buffer.from(state);
+    stateOk = !!pending && a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b) && (now - pending.ts) <= feishu.STATE_TTL;
+  } catch { stateOk = false; }
+  if (!stateOk) { redirect(res, feishuErrorRedirect(pending ? 'expired' : 'state'), clear); return; }
+  if (url.searchParams.get('error') || !code) { redirect(res, feishuErrorRedirect('cancelled'), clear); return; }
+  try {
+    const userToken = await feishu.exchangeCode(settings, code, pending.verifier || '', pending.redirect_uri || feishuRedirectUri(req));
+    const profile = await feishu.fetchUser(userToken);
+    const result = await users.loginOrCreateFeishu(profile);
+    const next = safeConsoleNext(pending.next);
+    const sep = next.includes('?') ? '&' : '?';
+    redirect(res, `${next}${sep}auth_token=${encodeURIComponent(result.token)}`, clear);
+    console.log(`feishu_login_ok name=${(profile.name || profile.en_name || '').slice(0, 40)} open_id=${feishu.mask(profile.open_id)}`);
+  } catch (error) {
+    if (error instanceof feishu.FeishuLoginError) {
+      console.warn(`feishu_login_failed reason=${error.key}`);
+      redirect(res, feishuErrorRedirect(error.key), clear); return;
+    }
+    if (error.status === 403) { redirect(res, feishuErrorRedirect('account_disabled'), clear); return; }
+    console.warn(`feishu_login_failed reason=server status=${error.status || 500}`);
+    redirect(res, feishuErrorRedirect('token_failed'), clear);
+  }
 }
 async function handleUsers(req, res, route, principal) {
   if (!principal.admin) throw failure('Forbidden', 403);
@@ -1061,6 +1176,11 @@ const server = http.createServer(async (req, res) => {
       if (sessions[hookSessionKey].paused) { body = { session: hookSessionKey }; send(res, 423, { error: '该会话已暂停接收', paused: true, session: hookSessionKey }); record(423, { error: '已暂停接收' }); return; }
     } else if (!(req.method === 'GET' && route === '/sessions') && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
     if (req.method === 'GET' && route === '/api/auth/status') { send(res, 200, { needs_setup: !users.hasAdmin() }); return; }
+    if (req.method === 'GET' && route === '/api/auth/feishu/status') {
+      send(res, 200, { enabled: feishu.enabled(settings) }); return;
+    }
+    if (req.method === 'GET' && route === '/api/auth/feishu/login') { await handleFeishuLogin(req, res, url); return; }
+    if (req.method === 'GET' && route === '/api/auth/feishu/callback') { await handleFeishuCallback(req, res, url); return; }
     if (req.method === 'POST' && route === '/api/auth/login') {
       const input = await readJson(req);
       send(res, 200, await users.login(input.username, input.password)); return;
@@ -1099,6 +1219,17 @@ const server = http.createServer(async (req, res) => {
         if (!principal.admin) throw failure('Forbidden', 403);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ token: process.env.WEBHOOK_TOKEN })); return;
+      }
+      if (route === '/api/settings/feishu') {
+        if (!principal.admin) throw failure('Forbidden', 403);
+        if (req.method === 'GET') { send(res, 200, settings.publicFeishu(DEFAULT_FEISHU_REDIRECT)); return; }
+        if (req.method === 'PUT') {
+          const input = await readJson(req);
+          send(res, 200, settings.setFeishu({
+            app_id: input.app_id, app_secret: input.app_secret, redirect_uri: input.redirect_uri, enabled: input.enabled,
+          })); return;
+        }
+        throw failure('Method not allowed', 405);
       }
       if (route === '/api/users' || route.startsWith('/api/users/')) { await handleUsers(req, res, route, principal); return; }
       if (req.method === 'GET' && route === '/api/codex/threads') {

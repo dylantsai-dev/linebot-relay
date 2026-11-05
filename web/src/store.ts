@@ -1,6 +1,6 @@
 import { reactive, ref, computed, watch } from 'vue'
 import { fileSize } from './lib/format'
-import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode, Prompt } from './lib/types'
+import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode, Prompt, FeishuSettings } from './lib/types'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 // Upload limits come from the server (/api/whoami); these are the fallbacks.
@@ -95,6 +95,30 @@ export async function api<T = any>(route: string, options: RequestInit = {}, aut
   return data as T
 }
 
+
+export const FEISHU_ERRORS: Record<string, string> = {
+  no_permission: '你的飞书账号不在本应用的可用范围内，请联系管理员添加',
+  wrong_tenant: '非本企业飞书账号，无法登录',
+  denied: '该飞书账号已被禁止登录',
+  expired: '授权已过期，请重新登录',
+  state: '登录请求无效或已过期，请重新点击「使用飞书登录」',
+  cancelled: '你取消了飞书授权',
+  tenant_unset: '企业校验尚未完成，请先由应用管理员登录一次',
+  disabled: '飞书登录尚未配置',
+  network: '连接飞书超时，请稍后重试',
+  pkce: '飞书授权校验失败（PKCE），请重新点击「使用飞书登录」',
+  redirect_mismatch: '回调地址与飞书应用配置不一致，请联系管理员',
+  app_secret: '飞书应用凭证无效，请联系管理员',
+  not_installed: '飞书应用未启用或未安装到本企业',
+  user_invalid: '该飞书账号状态异常（已停用或不存在）',
+  userinfo_failed: '已授权，但读取飞书用户信息失败，请重试',
+  token_failed: '飞书授权换取失败，请重试',
+  account_disabled: '账号已停用，请联系管理员',
+}
+export const FEISHU_ERROR_DEFAULT = '飞书登录失败，请稍后重试'
+export const loginBanner = ref('')
+export function clearLoginBanner() { loginBanner.value = '' }
+
 const TOKEN_KEY = 'relay-token'
 function storageGet(store: Storage, key: string) { try { return store.getItem(key) } catch { return null } }
 function clearTokens() { for (const store of [localStorage, sessionStorage]) try { store.removeItem(TOKEN_KEY) } catch { /* ignore */ } }
@@ -157,6 +181,23 @@ export function logout(revoke = true) {
 }
 
 export async function restoreLogin() {
+  try {
+    const url = new URL(location.href)
+    const authToken = url.searchParams.get('auth_token')
+    const feishuError = url.searchParams.get('feishu_error')
+    if (authToken || feishuError !== null) {
+      url.searchParams.delete('auth_token')
+      url.searchParams.delete('feishu_error')
+      const q = url.searchParams.toString()
+      history.replaceState(history.state, '', url.pathname + (q ? `?${q}` : '') + url.hash)
+    }
+    if (feishuError) loginBanner.value = FEISHU_ERRORS[feishuError] || FEISHU_ERROR_DEFAULT
+    if (authToken) {
+      await login(authToken, true).catch((e: Error) => { loginBanner.value = e.message || FEISHU_ERROR_DEFAULT })
+      state.booting = false
+      return
+    }
+  } catch { /* ignore bad URL */ }
   const saved = storageGet(localStorage, TOKEN_KEY) || storageGet(sessionStorage, TOKEN_KEY)
   if (saved) await login(saved, !!storageGet(localStorage, TOKEN_KEY)).catch(() => {})
   state.booting = false
@@ -701,6 +742,11 @@ export async function updateUser(id: number, input: UserInput) {
 }
 export async function resetPassword(id: number, password: string) { await api(`/api/users/${id}/password`, { method: 'POST', body: JSON.stringify({ password }) }) }
 export async function deleteUser(id: number) { await api(`/api/users/${id}`, { method: 'DELETE' }); await refreshUsers() }
+
+export async function fetchFeishuSettings() { return api<FeishuSettings>('/api/settings/feishu') }
+export async function saveFeishuSettings(input: { app_id?: string; app_secret?: string; redirect_uri?: string; enabled?: boolean }) {
+  return api<FeishuSettings>('/api/settings/feishu', { method: 'PUT', body: JSON.stringify(input) })
+}
 export async function changeOwnPassword(current: string, next: string) { await api('/api/auth/password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }) }) }
 /** First-run: create the first admin while signed in with the webhook token, then switch to that account. */
 export async function setupAdmin(username: string, password: string) {

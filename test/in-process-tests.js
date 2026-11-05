@@ -70,7 +70,7 @@ function simulatedSpawn(bin, args, options) {
 function load() {
   const context = vm.createContext({
     __dirname: path.resolve(__dirname, '..'),
-    require: name => name === 'node:http' ? { createServer: callback => { handler = callback; return { listen() {} }; } } : name === 'node:child_process' ? { spawn: simulatedSpawn } : name === './lib/appserver' ? require('../lib/appserver') : name === './lib/attachments' ? require('../lib/attachments') : name === './lib/users' ? require('../lib/users') : name === './lib/media' ? require('../lib/media') : require(name),
+    require: name => name === 'node:http' ? { createServer: callback => { handler = callback; return { listen() {} }; } } : name === 'node:child_process' ? { spawn: simulatedSpawn } : name === './lib/appserver' ? require('../lib/appserver') : name === './lib/attachments' ? require('../lib/attachments') : name === './lib/users' ? require('../lib/users') : name === './lib/settings' ? require('../lib/settings') : name === './lib/feishu' ? require('../lib/feishu') : name === './lib/media' ? require('../lib/media') : require(name),
     process: { env: process.env, exit: process.exit, kill: pid => children.get(-pid)?.close(null) }, Buffer, setTimeout, clearTimeout, AbortSignal,
     console: { log() {}, error: console.error },
     fetch: async (url, options) => { callbacks.push(JSON.parse(options.body)); return { ok: true }; },

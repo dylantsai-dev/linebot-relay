@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import BrandMark from './BrandMark.vue'
 import { ref, onMounted, nextTick } from 'vue'
-import { login, loginPassword, isDark, toggleTheme } from '../store'
+import { login, loginPassword, isDark, toggleTheme, loginBanner, clearLoginBanner } from '../store'
 import Icon from './Icon.vue'
 const mode = ref<'password' | 'token'>('password')
 const username = ref(''), password = ref(''), token = ref('')
 const remember = ref(false), busy = ref(false), error = ref(''), needsSetup = ref(false)
+const feishuEnabled = ref(false)
 const first = ref<HTMLInputElement>()
 onMounted(async () => {
   first.value?.focus()
+  if (loginBanner.value) { error.value = loginBanner.value; clearLoginBanner() }
   try {
     const status = await (await fetch('/api/auth/status', { cache: 'no-store' })).json()
     if (status.needs_setup) { needsSetup.value = true; switchMode('token') }
   } catch { /* the login form still works */ }
+  try {
+    const fs = await (await fetch('/api/auth/feishu/status', { cache: 'no-store' })).json()
+    feishuEnabled.value = !!fs.enabled
+  } catch { feishuEnabled.value = false }
 })
 async function switchMode(next: 'password' | 'token') { mode.value = next; error.value = ''; await nextTick(); first.value?.focus() }
 const ready = () => (mode.value === 'token' ? !!token.value : !!username.value.trim() && !!password.value)
@@ -25,6 +31,10 @@ async function submit() {
   } catch (e) { error.value = (e as Error).message }
   finally { busy.value = false }
 }
+function feishuLogin() {
+  const next = encodeURIComponent('/console/')
+  location.href = `/api/auth/feishu/login?next=${next}`
+}
 </script>
 <template>
   <div class="login">
@@ -33,6 +43,10 @@ async function submit() {
       <BrandMark class="login-mark" :size="44" />
       <h1 class="display">欢迎回来</h1>
       <p class="login-sub">{{ mode === 'password' ? '登录 ディランボット 三代目' : '使用访问令牌（WEBHOOK_TOKEN）登录' }}</p>
+      <template v-if="feishuEnabled">
+        <button type="button" class="btn feishu-btn block" @click="feishuLogin"><Icon name="login" :size="15" />使用飞书登录</button>
+        <div class="login-or"><span>或使用账号</span></div>
+      </template>
       <div class="segmented login-tabs" role="tablist" aria-label="登录方式">
         <button type="button" role="tab" :aria-selected="mode === 'password'" :class="{ on: mode === 'password' }" @click="switchMode('password')"><Icon name="user" :size="14" />账号密码</button>
         <button type="button" role="tab" :aria-selected="mode === 'token'" :class="{ on: mode === 'token' }" @click="switchMode('token')"><Icon name="key" :size="14" />访问令牌</button>

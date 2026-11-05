@@ -41,8 +41,10 @@ function keys(e: KeyboardEvent) {
 }
 
 /* ---- user menu + change password ---- */
-const name = computed(() => state.me?.user?.username || '访问令牌')
-const initial = computed(() => (state.me?.user?.username || '#').slice(0, 1).toUpperCase())
+const name = computed(() => state.me?.user?.display_name || state.me?.user?.username || '访问令牌')
+const initial = computed(() => (state.me?.user?.display_name || state.me?.user?.username || '#').slice(0, 1).toUpperCase())
+const avatarUrl = computed(() => state.me?.user?.avatar_url || '')
+const canChangePassword = computed(() => !!state.me?.user?.has_password)
 const userOpen = ref(false), userRoot = ref<HTMLElement>()
 function outside(e: PointerEvent) { if (userOpen.value && userRoot.value && !userRoot.value.contains(e.target as Node)) userOpen.value = false }
 onMounted(() => { document.addEventListener('pointerdown', outside); document.addEventListener('keydown', keys) })
@@ -129,20 +131,20 @@ async function savePassword() {
 
     <div ref="userRoot" class="side-foot">
       <button class="user-btn" :aria-expanded="userOpen" aria-haspopup="menu" :data-tip="sidebarCollapsed ? name : undefined" @click="userOpen = !userOpen">
-        <span class="user-avatar" :class="{ token: !state.me?.user }"><Icon v-if="!state.me?.user" name="key" :size="13" /><template v-else>{{ initial }}</template></span>
+        <span class="user-avatar" :class="{ token: !state.me?.user, 'has-img': !!avatarUrl }"><Icon v-if="!state.me?.user" name="key" :size="13" /><img v-else-if="avatarUrl" :src="avatarUrl" alt="" referrerpolicy="no-referrer" /><template v-else>{{ initial }}</template></span>
         <span class="user-meta"><span class="user-name">{{ name }}</span><span class="user-role">{{ isAdmin ? '超级管理员' : '普通用户' }}</span></span>
         <Icon name="chevron" :size="14" class="user-chev" />
       </button>
       <Transition name="pop">
         <div v-if="userOpen" class="menu user-dropdown" role="menu">
           <div class="user-card">
-            <span class="user-avatar lg" :class="{ token: !state.me?.user }"><Icon v-if="!state.me?.user" name="key" :size="15" /><template v-else>{{ initial }}</template></span>
+            <span class="user-avatar lg" :class="{ token: !state.me?.user, 'has-img': !!avatarUrl }"><Icon v-if="!state.me?.user" name="key" :size="15" /><img v-else-if="avatarUrl" :src="avatarUrl" alt="" referrerpolicy="no-referrer" /><template v-else>{{ initial }}</template></span>
             <span><strong>{{ name }}</strong><small class="muted">{{ state.me?.user ? (isAdmin ? '超级管理员 · 全部会话' : '普通用户 · 仅分配的会话') : 'WEBHOOK_TOKEN · 全部权限' }}</small></span>
           </div>
           <button class="menu-item" role="menuitem" @click="toggleTheme(); userOpen = false"><Icon :name="isDark ? 'sun' : 'moon'" :size="15" /><span class="menu-label">{{ isDark ? '浅色模式' : '深色模式' }}</span></button>
           <button v-if="canInstall" class="menu-item" role="menuitem" @click="onInstall"><Icon name="download" :size="15" /><span class="menu-label">安装到桌面</span></button>
           <button v-else-if="showIosInstallHint" class="menu-item" role="menuitem" @click="onIosHint"><Icon name="download" :size="15" /><span class="menu-label">添加到主屏幕</span></button>
-          <button v-if="state.me?.user" class="menu-item" role="menuitem" @click="openPassword"><Icon name="lock" :size="15" /><span class="menu-label">修改密码</span></button>
+          <button v-if="canChangePassword" class="menu-item" role="menuitem" @click="openPassword"><Icon name="lock" :size="15" /><span class="menu-label">修改密码</span></button>
           <button class="menu-item" role="menuitem" @click="logout()"><Icon name="logout" :size="15" /><span class="menu-label">退出登录</span></button>
         </div>
       </Transition>

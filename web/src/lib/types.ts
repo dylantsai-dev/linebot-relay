@@ -61,9 +61,9 @@ export interface Stats { today: { calls: number; failures: number; avg_duration_
 export interface RequestRow { time: string; request_id: string; session: string | null; source: string; method: string; path: string; status: number | string; ok: boolean; duration_ms: number; error: string | null }
 export interface DraftFile { id: number; file: File; name: string; size: number; mime: string; kind: 'image' | 'file'; preview: string | null }
 export interface PendingSend { message: string; attachments: DraftFile[]; started: number }
-export interface User { id: number; username: string; role: 'admin' | 'user'; disabled: boolean; created_at: string; updated_at: string; last_login_at: string | null; sessions: string[] }
+export interface User { id: number; username: string; role: 'admin' | 'user'; disabled: boolean; created_at: string; updated_at: string; last_login_at: string | null; sessions: string[]; avatar_url?: string; display_name?: string; auth_provider?: 'password' | 'feishu'; has_password?: boolean; feishu_open_id?: string | null }
 export interface Limits { max_file_bytes: number; max_files: number; max_total_bytes: number }
-export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; limits?: Limits; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }
+export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; limits?: Limits; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null; avatar_url?: string; display_name?: string; auth_provider?: 'password' | 'feishu'; has_password?: boolean } | null }
 
 export interface ModelInfo { id: string; displayName: string; description: string; isDefault: boolean; defaultReasoningEffort: string | null; supportedReasoningEfforts: { id: string; description: string }[]; serviceTiers: { id: string; name: string; description: string }[]; defaultServiceTier: string | null }
 
@@ -77,3 +77,5 @@ export interface UsageSnapshot {
   credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null
   fetched_at: string
 }
+
+export interface FeishuSettings { app_id: string; has_secret: boolean; redirect_uri: string; enabled: boolean; ready: boolean; default_redirect_uri: string }

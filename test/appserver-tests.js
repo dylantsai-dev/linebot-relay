@@ -62,6 +62,8 @@ function loadRelay() {
       if (name === 'node:child_process') return { spawn() { spawnCount++; throw new Error('EXEC_FALLBACK'); } };
       if (name === './lib/attachments') return require('../lib/attachments');
       if (name === './lib/users') return require('../lib/users');
+      if (name === './lib/settings') return require('../lib/settings');
+      if (name === './lib/feishu') return require('../lib/feishu');
       if (name === './lib/media') return require('../lib/media');
       return require(name);
     },
