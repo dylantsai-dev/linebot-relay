@@ -290,7 +290,11 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
         </div>
         <template v-else>
           <div v-if="state.historyLoading && !items.length" class="msg-skeleton">
-            <div v-for="i in 3" :key="i" class="sk-msg" :class="{ right: i === 2 }"><span class="sk w30" /><span class="sk w90" /><span class="sk w70" /></div>
+            <div v-for="i in 4" :key="i" class="sk-row" :class="{ right: i % 2 === 0 }" aria-hidden="true">
+              <span class="sk avatar" />
+              <div class="sk-msg" :class="{ right: i % 2 === 0 }"><span class="sk w30" /><span class="sk bubble" :class="i % 2 === 0 ? 'w60 short' : 'w90'" /><span v-if="i % 2" class="sk bubble short w70" /></div>
+            </div>
+            <div class="sk-hint" role="status">正在加载消息<span class="dots"><i /><i /><i /></span></div>
           </div>
           <div v-else-if="state.historyError && !items.length" class="state-box big error">
             <div class="state-icon"><Icon name="alert" :size="20" /></div>
