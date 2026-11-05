@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, setSessionPaused, toast } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast } from '../store'
 import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
@@ -137,10 +137,6 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <span v-else class="id-pill mono muted">{{ selectedSession?.draft ? '首条消息后创建' : '未绑定' }}</span>
         </div>
         <span class="spacer" />
-        <button v-if="canCreate && selectedSession && !selectedSession.draft" class="recv-toggle" :class="{ paused: selectedSession.paused }" :data-tip="selectedSession.paused ? '点击恢复接收 Webhook 消息' : '点击暂停接收 Webhook 消息'" :aria-pressed="!!selectedSession.paused" @click="setSessionPaused(selectedSession.key, !selectedSession.paused).catch(e => toast(e.message))">
-          <span class="recv-dot" /><span>{{ selectedSession.paused ? '已暂停接收' : '接收中' }}</span>
-        </button>
-        <span v-else-if="selectedSession?.paused" class="recv-toggle paused static"><span class="recv-dot" /><span>已暂停接收</span></span>
         <ModelPicker v-if="selectedSession && !selectedSession.draft" :session="selectedSession" :editable="isAdmin" />
         <span v-if="state.historySource === 'local'" class="src-pill" data-tip="ディランボット 三代目 未连接，显示本地记录">本地记录</span>
         <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="Webhook" aria-label="Webhook" aria-haspopup="dialog" @click="openWebhook(selectedSession)"><Icon name="webhook" /></button>

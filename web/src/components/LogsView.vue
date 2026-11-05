@@ -16,6 +16,23 @@ const cards = computed(() => {
     { icon: 'queue', label: '运行 / 排队', value: `${s.running} / ${s.queued}`, sub: `已运行 ${uptime(s.uptime_s)}` },
   ]
 })
+const week = computed(() => logs.usage?.week || null)
+const other = computed(() => {
+  const u = logs.usage
+  if (!u?.week) return null
+  const alt = [u.primary, u.secondary].find(w => w && w !== u.week)
+  return alt || null
+})
+const planLabel = computed(() => {
+  const plan = logs.usage?.plan
+  if (!plan) return null
+  const map: Record<string, string> = { free: 'Free', go: 'Go', plus: 'Plus', pro: 'Pro', prolite: 'Pro Lite', promax: 'Pro Max', team: 'Team', business: 'Business', enterprise: 'Enterprise', edu: 'Edu', edu_plus: 'Edu Plus', edu_pro: 'Edu Pro' }
+  return map[plan] || plan
+})
+function resetText(iso: string | null) {
+  if (!iso) return '重置时间未知'
+  return `重置于 ${time(iso)}`
+}
 </script>
 <template>
   <div class="page">
@@ -23,6 +40,32 @@ const cards = computed(() => {
       <div class="page-head">
         <div><h1><span class="title-icon"><Icon name="logs" :size="18" /></span>日志</h1><p class="muted">最近 100 次 Webhook 与控制台调用，时间为台北时间。<template v-if="!isAdmin">仅显示你有权访问的会话。</template></p></div>
       </div>
+
+      <div v-if="isAdmin" class="usage-card">
+        <div class="usage-head">
+          <span class="stat-label"><Icon name="activity" :size="13" />每周用量</span>
+          <span v-if="planLabel" class="usage-plan">{{ planLabel }}</span>
+          <span class="spacer" />
+          <span v-if="week" class="usage-pct mono">{{ week.used_percent }}%</span>
+        </div>
+        <template v-if="week">
+          <div class="usage-bar" role="progressbar" :aria-valuenow="week.used_percent" aria-valuemin="0" aria-valuemax="100" :aria-label="`${week.label}已用 ${week.used_percent}%`">
+            <span class="usage-fill" :class="{ warn: week.used_percent >= 80, hot: week.used_percent >= 95 }" :style="{ width: `${week.used_percent}%` }" />
+          </div>
+          <div class="usage-meta">
+            <span>{{ week.label }}已用 {{ week.used_percent }}%</span>
+            <span class="dim">{{ resetText(week.resets_at) }}</span>
+          </div>
+          <div v-if="other" class="usage-secondary">
+            <span>{{ other.label }} {{ other.used_percent }}%</span>
+            <span class="dim">{{ resetText(other.resets_at) }}</span>
+          </div>
+        </template>
+        <div v-else-if="logs.usageError" class="usage-empty warn">{{ logs.usageError }}</div>
+        <div v-else-if="logs.loading && !logs.usage" class="usage-empty"><span class="sk w60" /><span class="sk w40" /></div>
+        <div v-else class="usage-empty">暂无用量数据</div>
+      </div>
+
       <div class="stats">
         <template v-if="cards.length">
           <div v-for="c in cards" :key="c.label" class="stat"><span class="stat-label"><Icon :name="c.icon" :size="13" />{{ c.label }}</span><strong :class="{ warn: c.warn }">{{ c.value }}</strong><span class="stat-sub">{{ c.sub }}</span></div>

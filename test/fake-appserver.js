@@ -154,6 +154,19 @@ class FakeAppServer {
         if (!params?.cursor) respond({ data: [{ id: 'm-a', model: 'm-a', displayName: 'Model A', description: 'a', isDefault: true, hidden: false }, { id: 'm-h', displayName: 'Hidden', hidden: true }], nextCursor: 'p2' });
         else respond({ data: [{ id: 'm-b', model: 'm-b', displayName: 'Model B', description: 'b', isDefault: false, hidden: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'low', description: 'l' }, { reasoningEffort: 'high', description: 'h' }], serviceTiers: [{ id: 'fast', name: 'Fast', description: 'f' }], defaultServiceTier: null }], nextCursor: null });
         break;
+      case 'account/rateLimits/read': {
+        const now = Math.floor(Date.now() / 1000);
+        respond({
+          rateLimits: {
+            planType: 'pro',
+            limitName: 'Codex Pro',
+            primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: now + 3600 },
+            secondary: { usedPercent: 44, windowDurationMins: 10080, resetsAt: now + 86400 * 3 },
+            credits: { hasCredits: false, unlimited: false, balance: null },
+          },
+        });
+        break;
+      }
       default: send({ id, error: { code: -32601, message: 'unsupported fixture request' } });
     }
   }

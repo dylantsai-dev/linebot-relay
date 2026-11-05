@@ -168,6 +168,7 @@ async function main() {
   { const r = await call(a, '/api/sessions/s1', { method: 'PATCH', body: { model: 'x' } }); assert.equal(r.status, 403, 'only admins set model'); }
   assert.equal((await call(a, '/api/sessions/s1', { method: 'PATCH', body: { effort: 'high', service_tier: 'fast' } })).status, 403);
   assert.equal((await call(a, '/api/models')).status, 403);
+  assert.equal((await call(a, '/api/usage')).status, 403);
   { const r = await call(a, '/api/sessions/s1', { method: 'PATCH', body: { paused: true } }); assert.equal(r.status, 403, 'only admins pause'); assert.equal(r.body.error, '仅管理员可以修改会话'); }
 
   // Normal user: only granted sessions, everywhere.

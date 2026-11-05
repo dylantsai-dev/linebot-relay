@@ -1,6 +1,6 @@
 import { reactive, ref, computed, watch } from 'vue'
 import { fileSize } from './lib/format'
-import type { Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode } from './lib/types'
+import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode } from './lib/types'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 // Upload limits come from the server (/api/whoami); these are the fallbacks.
@@ -424,14 +424,37 @@ export async function stopTurn() {
 }
 
 /* ---------- logs ---------- */
-export const logs = reactive({ stats: null as Stats | null, requests: [] as RequestRow[], loaded: false, loading: false, error: '', auto: true })
+export const logs = reactive({ stats: null as Stats | null, requests: [] as RequestRow[], usage: null as UsageSnapshot | null, usageError: '', loaded: false, loading: false, error: '', auto: true })
 export async function refreshLogs() {
   const own = epoch
   logs.loading = true
   try {
-    const [stats, data] = await Promise.all([api<Stats>('/api/stats'), api<{ requests: RequestRow[] }>('/api/requests?limit=100')])
+    const tasks: Promise<unknown>[] = [api<Stats>('/api/stats'), api<{ requests: RequestRow[] }>('/api/requests?limit=100')]
+    if (isAdmin.value) tasks.push(api<{ usage: UsageSnapshot }>('/api/usage'))
+    const results = await Promise.allSettled(tasks)
     if (own !== epoch) return
-    logs.stats = stats; logs.requests = data.requests; logs.loaded = true; logs.error = ''
+    const statsR = results[0], reqR = results[1]
+    if (statsR.status === 'rejected' || reqR.status === 'rejected') {
+      const err = (statsR.status === 'rejected' ? statsR.reason : (reqR as PromiseRejectedResult).reason) as Error
+      logs.error = err.message
+    } else {
+      logs.stats = statsR.value as Stats
+      logs.requests = (reqR.value as { requests: RequestRow[] }).requests
+      logs.loaded = true
+      logs.error = ''
+    }
+    if (isAdmin.value) {
+      const usageR = results[2]
+      if (usageR && usageR.status === 'fulfilled') {
+        logs.usage = (usageR.value as { usage: UsageSnapshot }).usage
+        logs.usageError = ''
+      } else if (usageR && usageR.status === 'rejected') {
+        logs.usageError = (usageR.reason as Error).message
+      }
+    } else {
+      logs.usage = null
+      logs.usageError = ''
+    }
   } catch (error) { if (own === epoch) logs.error = (error as Error).message }
   finally { logs.loading = false }
 }

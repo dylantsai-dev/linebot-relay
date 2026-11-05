@@ -302,6 +302,14 @@ async function main() {
   assert.equal(listed.status, 200, JSON.stringify(listed));
   assert.deepEqual(listed.body.models.map(m => m.id), ['m-a', 'm-b']);
   assert.equal(listed.body.models[0].isDefault, true);
+  const usage = await api('GET', '/api/usage');
+  assert.equal(usage.status, 200, JSON.stringify(usage));
+  assert.equal(usage.body.usage.plan, 'pro');
+  assert.equal(usage.body.usage.limit_name, 'Pro');
+  assert.equal(usage.body.usage.week.label, '本周');
+  assert.equal(usage.body.usage.week.used_percent, 44);
+  assert.equal(usage.body.usage.primary.used_percent, 12);
+  assert.ok(fake.requests.some(r => r.method === 'account/rateLimits/read'));
   assert.equal((await api('PATCH', '/api/sessions/images', { model: '' })).status, 400);
   const setModel = await api('PATCH', '/api/sessions/images', { model: 'm-b' });
   assert.equal(setModel.status, 200); assert.equal(setModel.body.session.model, 'm-b');

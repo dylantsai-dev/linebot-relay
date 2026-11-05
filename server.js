@@ -421,6 +421,52 @@ async function modelList() {
   }
 }
 
+
+let usageCache = null;
+function windowLabel(mins) {
+  if (mins == null) return '用量窗口';
+  if (mins >= 10080 - 60) return '本周';
+  if (mins >= 1440 && mins % 1440 === 0) return `${mins / 1440} 天`;
+  if (mins >= 60 && mins % 60 === 0) return `${mins / 60} 小时`;
+  return `${mins} 分钟`;
+}
+function mapWindow(win) {
+  if (!win || typeof win.usedPercent !== 'number') return null;
+  return {
+    used_percent: Math.max(0, Math.min(100, Math.round(win.usedPercent))),
+    resets_at: typeof win.resetsAt === 'number' ? new Date(win.resetsAt * 1000).toISOString() : null,
+    window_mins: typeof win.windowDurationMins === 'number' ? win.windowDurationMins : null,
+    label: windowLabel(typeof win.windowDurationMins === 'number' ? win.windowDurationMins : null),
+  };
+}
+async function usageSnapshot() {
+  if (usageCache && Date.now() - usageCache.at < 60000) return usageCache.data;
+  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('用量服务未连接，暂时无法获取用量', 503);
+  try {
+    await appserver.connect();
+    const result = await appserver.getRateLimits({ excludeResetCreditDetails: true });
+    const snap = result?.rateLimits || result || {};
+    const primary = mapWindow(snap.primary);
+    const secondary = mapWindow(snap.secondary);
+    const week = [primary, secondary].filter(Boolean).find(w => (w.window_mins || 0) >= 10080 - 60)
+      || [secondary, primary].find(Boolean)
+      || null;
+    const data = {
+      plan: snap.planType || null,
+      limit_name: hideBrand(snap.limitName || '') || null,
+      week,
+      primary,
+      secondary,
+      credits: snap.credits ? { has_credits: !!snap.credits.hasCredits, unlimited: !!snap.credits.unlimited, balance: snap.credits.balance ?? null } : null,
+      fetched_at: new Date().toISOString(),
+    };
+    usageCache = { at: Date.now(), data };
+    return data;
+  } catch (error) {
+    throw failure('获取用量失败：' + (error.message || '用量服务不可用'), 503);
+  }
+}
+
 async function runCodex(key, message, sessionId, input) {
   if (!appserver || !fs.existsSync(appserverSocket)) return runCodexExec(key, message, sessionId);
   let submitted = false;
@@ -1025,6 +1071,10 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && route === '/api/models') {
         if (!principal.admin) throw failure('仅管理员可以查看模型', 403);
         send(res, 200, { models: await modelList() }); return;
+      }
+      if (req.method === 'GET' && route === '/api/usage') {
+        if (!principal.admin) throw failure('仅管理员可以查看用量', 403);
+        send(res, 200, { usage: await usageSnapshot() }); return;
       }
       if (req.method === 'GET' && route === '/api/sessions') {
         const listing = await sessionListing();

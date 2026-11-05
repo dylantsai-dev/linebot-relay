@@ -58,3 +58,14 @@ export interface Limits { max_file_bytes: number; max_files: number; max_total_b
 export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; limits?: Limits; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }
 
 export interface ModelInfo { id: string; displayName: string; description: string; isDefault: boolean; defaultReasoningEffort: string | null; supportedReasoningEfforts: { id: string; description: string }[]; serviceTiers: { id: string; name: string; description: string }[]; defaultServiceTier: string | null }
+
+export interface UsageWindow { used_percent: number; resets_at: string | null; window_mins: number | null; label: string }
+export interface UsageSnapshot {
+  plan: string | null
+  limit_name: string | null
+  week: UsageWindow | null
+  primary: UsageWindow | null
+  secondary: UsageWindow | null
+  credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null
+  fetched_at: string
+}
