@@ -777,3 +777,8 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .model-chip em { font-style: normal; opacity: .75; }
 .model-chip:hover { background: var(--bg-hover); color: var(--ink); }
 .model-chip.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.model-head { display: flex; align-items: center; gap: 6px; }
+.model-head svg { color: var(--muted); opacity: .85; }
+.model-ico { flex: none; color: var(--muted); opacity: .8; align-self: flex-start; margin-top: 2px; }
+.model-item[aria-checked="true"] .model-ico { color: var(--accent); opacity: 1; }
+.model-chip.on::before { content: ''; }

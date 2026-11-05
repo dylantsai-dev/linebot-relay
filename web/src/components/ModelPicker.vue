@@ -53,26 +53,27 @@ onBeforeUnmount(close)
       <Icon name="sparkles" :size="13" /><span class="model-name">{{ label }}</span><Icon name="chevron" :size="12" />
     </button>
     <div v-if="open" class="model-menu" role="menu">
-      <div class="model-head">模型</div>
+      <div class="model-head"><Icon name="cpu" :size="13" />模型</div>
       <button class="model-item" role="menuitemradio" :aria-checked="!session.model" @click="chooseModel(null)">
-        <span class="model-text"><span>默认</span><small>跟随后台默认设置</small></span><Icon v-if="!session.model" name="check" :size="14" class="model-check" />
+        <Icon name="reset" :size="14" class="model-ico" /><span class="model-text"><span>默认</span><small>跟随后台默认设置</small></span><Icon v-if="!session.model" name="check" :size="14" class="model-check" />
       </button>
       <div v-if="loading" class="model-note">加载中…</div>
       <div v-else-if="error" class="model-note err">{{ error }}</div>
       <template v-else>
         <button v-for="m in models" :key="m.id" class="model-item" role="menuitemradio" :aria-checked="session.model === m.id" @click="chooseModel(m.id)">
+          <Icon name="box" :size="14" class="model-ico" />
           <span class="model-text"><span>{{ m.displayName }}<em v-if="m.isDefault"> · 默认</em></span><small v-if="m.description">{{ m.description }}</small></span>
           <Icon v-if="session.model === m.id" name="check" :size="14" class="model-check" />
         </button>
         <template v-if="current?.supportedReasoningEfforts.length">
-          <div class="model-sep" /><div class="model-head">思考深度</div>
+          <div class="model-sep" /><div class="model-head"><Icon name="brain" :size="13" />思考深度</div>
           <div class="model-chips">
             <button class="model-chip" :class="{ on: !session.effort }" @click="chooseEffort(null)">默认<em v-if="current.defaultReasoningEffort">（{{ effortName(current.defaultReasoningEffort) }}）</em></button>
             <button v-for="e in current.supportedReasoningEfforts" :key="e.id" class="model-chip" :class="{ on: session.effort === e.id }" :data-tip="e.description || undefined" @click="chooseEffort(e.id)">{{ effortName(e.id) }}</button>
           </div>
         </template>
         <template v-if="current?.serviceTiers.length">
-          <div class="model-sep" /><div class="model-head">速度</div>
+          <div class="model-sep" /><div class="model-head"><Icon name="zap" :size="13" />速度</div>
           <div class="model-chips">
             <button class="model-chip" :class="{ on: !session.service_tier }" @click="chooseTier(null)">默认</button>
             <button v-for="t in current.serviceTiers" :key="t.id" class="model-chip" :class="{ on: session.service_tier === t.id }" :data-tip="t.description || undefined" @click="chooseTier(t.id)">{{ tierName(t.id, current) }}</button>
