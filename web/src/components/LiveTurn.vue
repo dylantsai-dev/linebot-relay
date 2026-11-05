@@ -63,6 +63,8 @@ const zoom = (src: string) => (state.lightbox = { src, alt: '生成的图片' })
       <div v-if="images.length" class="gen-images">
         <button v-for="img in images" :key="img.id" type="button" class="gen-image" @click="zoom(img.url!)"><img :src="img.url" alt="生成的图片" loading="lazy" referrerpolicy="no-referrer"></button>
       </div>
+      <!-- Same box as the final message footer, so the swap to the finished message does not move anything. -->
+      <div v-if="html" class="msg-meta live-meta"><span class="who">Codex</span><span class="meta mono">输出中<template v-if="elapsed !== undefined"> · {{ elapsed }}s</template></span></div>
       <div v-if="!html" class="typing"><span>{{ html ? '输出中' : activity.length ? '工作中' : '思考中' }}</span><span class="dots"><i /><i /><i /></span><span v-if="elapsed !== undefined" class="mono">{{ elapsed }}s</span><span class="badge live">实时</span></div>
     </div>
   </article>

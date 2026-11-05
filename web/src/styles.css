@@ -268,7 +268,6 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 
 /* messages */
 .msg { display: flex; gap: 14px; min-width: 0; }
-.msg.user.optimistic { animation: msg-in .25s var(--ease); }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
 .msg-avatar { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; margin-top: 1px; color: var(--accent); }
 .msg-avatar.error { color: var(--red); background: var(--red-soft); }
@@ -279,11 +278,11 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 .msg.user .msg-main { flex: 0 1 auto; max-width: min(85%, 600px); display: flex; flex-direction: column; align-items: flex-end; }
 .msg.user .msg-body { padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--bubble); color: var(--ink); }
 .msg.user .attachments { justify-content: flex-end; }
-.msg.optimistic { opacity: .7; }
 .msg.assistant .msg-body { font-size: 15px; line-height: 1.75; }
 .msg.error .msg-body { color: var(--red); }
 .msg-meta { display: flex; align-items: center; gap: 8px; min-height: 26px; margin-top: 4px; font-size: 11.5px; color: var(--faint); opacity: 0; transition: opacity .15s; }
 .msg:hover .msg-meta, .msg:focus-within .msg-meta, .msg.optimistic .msg-meta, .msg.error .msg-meta { opacity: 1; }
+.msg .live-meta { opacity: 1; }
 .msg-meta .who { font-weight: 500; color: var(--muted); }
 .msg-meta .badge { height: 18px; font-size: 10.5px; }
 .msg-copy { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; }

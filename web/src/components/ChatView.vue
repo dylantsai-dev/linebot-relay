@@ -48,7 +48,10 @@ const inflight = computed<{ id: string; entry: HistoryEntry; steered: boolean }[
   .filter(e => !(pending.value && pending.value.message === e.text))
   .map(e => ({ id: e.id, steered: e.status === 'steered', entry: { role: 'user' as const, text: e.text, source: e.source, time: e.created_at, attachments: e.attachments } })))
 const elapsed = computed(() => (pending.value ? Math.max(0, Math.floor((state.now - pending.value.started) / 1000)) : 0))
-const liveShown = computed(() => running.value && !!state.live?.items.length)
+// One placeholder for the whole turn (thinking -> working -> answer) so nothing swaps or remounts.
+// threadRunning comes from the stream/history (authoritative); the sessions poll lags and would
+// otherwise re-show a 思考中 placeholder under the finished answer for a few seconds.
+const liveShown = computed(() => !!pending.value || !!state.live || state.threadRunning || state.queue.some(e => e.status === 'running'))
 const liveElapsed = computed(() => (state.live?.startedAt ? Math.max(0, Math.floor((state.now - Date.parse(state.live.startedAt)) / 1000)) : undefined))
 
 /* ---- scroll: stick to bottom only when already near it; never jump otherwise ---- */
@@ -162,12 +165,6 @@ const sendLabel = computed(() => (showMode.value ? (mode.value === 'steer' ? '�
           </div>
           <MessageItem v-if="optimistic" key="__optimistic" :entry="optimistic" optimistic />
           <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="pending ? elapsed : liveElapsed" />
-          <Transition name="fade">
-            <div v-if="running && !liveShown" class="thinking">
-              <span class="spark"><Icon name="sparkles" :size="16" :stroke="1.6" /></span>
-              <span>思考中<span class="dots"><i /><i /><i /></span><template v-if="pending"> {{ elapsed }}s</template></span>
-            </div>
-          </Transition>
         </template>
       </div>
     </div>
