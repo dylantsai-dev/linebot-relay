@@ -335,11 +335,14 @@ export async function sendMessage(text: string, mode: SendMode = 'queue'): Promi
     }
   } finally {
     if (own === epoch) {
-      state.pending.delete(key)
-      if (!restored) files.forEach(f => f.preview && URL.revokeObjectURL(f.preview))
+      // Keep the pending message on screen until the history / queue that replaces it has arrived;
+      // dropping it first left a gap of one round trip where the bubble and the turn vanished and came back.
+      if (!ok) state.pending.delete(key)
       historySig = ''
       await refreshSessions().catch(e => toast(e.message))
       if (state.selected === key) await refreshHistory(key).catch(() => {})
+      state.pending.delete(key)
+      if (!restored) files.forEach(f => f.preview && URL.revokeObjectURL(f.preview))
     }
   }
   return ok
