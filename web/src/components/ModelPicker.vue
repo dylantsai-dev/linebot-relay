@@ -9,8 +9,8 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref('')
 const root = ref<HTMLElement | null>(null)
-const EFFORT: Record<string, string> = { none: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '极高' }
-const TIER: Record<string, string> = { fast: '快速', flex: '经济', priority: '优先', default: '标准', standard: '标准' }
+const EFFORT: Record<string, string> = { none: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大', ultra: '超强' }
+const TIER: Record<string, string> = { fast: '快速', flex: '经济', priority: '快速', default: '标准', standard: '标准' }
 const effortName = (id?: string | null) => id ? EFFORT[id] || id : ''
 const tierName = (id?: string | null, m?: ModelInfo) => id ? TIER[id] || m?.serviceTiers.find(t => t.id === id)?.name || id : ''
 const fallback = computed(() => models.value.find(m => m.isDefault))
