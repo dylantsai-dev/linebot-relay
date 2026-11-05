@@ -388,6 +388,17 @@ async function main() {
   assert.equal(tuned.status, 200); assert.equal(tuned.body.session.effort, 'high'); assert.equal(tuned.body.session.service_tier, 'fast');
   assert.equal((await post('images', 'tuned')).status, 200);
   { const p = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params; assert.equal(p.model, 'm-b'); assert.equal(p.effort, 'high'); assert.equal(p.serviceTier, 'fast'); }
+  // Access modes: default (unset) = ask; each mode maps onto approvalPolicy / approvalsReviewer / sandboxPolicy.
+  { const p = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params; assert.equal(p.approvalPolicy, 'on-request'); assert.equal(p.approvalsReviewer, 'user'); assert.deepEqual(p.sandboxPolicy, { type: 'workspaceWrite', networkAccess: false }); }
+  assert.equal((await api('PATCH', '/api/sessions/images', { approval_mode: 'yolo' })).status, 400);
+  for (const [mode, policy, reviewer, sandbox] of [['assist', 'on-request', 'auto_review', { type: 'workspaceWrite', networkAccess: false }], ['full', 'never', 'user', { type: 'dangerFullAccess' }], ['ask', 'on-request', 'user', { type: 'workspaceWrite', networkAccess: false }]]) {
+    const r = await api('PATCH', '/api/sessions/images', { approval_mode: mode });
+    assert.equal(r.status, 200); assert.equal(r.body.session.approval_mode, mode === 'ask' ? undefined : mode);
+    assert.equal((await post('images', 'mode ' + mode)).status, 200);
+    const p = fake.requests.filter(q => q.method === 'turn/start' && q.params.threadId === uploaded.body.codex_session_id).at(-1).params;
+    assert.equal(p.approvalPolicy, policy); assert.equal(p.approvalsReviewer, reviewer); assert.deepEqual(p.sandboxPolicy, sandbox);
+  }
+  assert.equal((await api('PATCH', '/api/sessions/images', { approval_mode: null })).body.session.approval_mode, undefined);
   { const c = await api('PATCH', '/api/sessions/images', { effort: null, service_tier: null }); assert.equal(c.body.session.effort, undefined); assert.equal(c.body.session.service_tier, undefined); }
   assert.equal((await api('PATCH', '/api/sessions/images', { model: null })).body.session.model, undefined);
   assert.equal((await post('images', 'no model')).status, 200);

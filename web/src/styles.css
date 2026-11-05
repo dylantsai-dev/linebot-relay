@@ -872,3 +872,15 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .feishu-form .field-label { margin-top: 10px; }
 .feishu-form .check { margin: 14px 0 6px; }
 .feishu-actions { justify-content: flex-start; margin-top: 8px; padding-top: 0; }
+
+/* ---- admin access-mode pill (composer bottom bar) ---- */
+.access-picker { display: inline-flex; }
+.access-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; transition: background-color .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease); }
+.access-btn:hover, .access-btn.open { background: var(--bg-hover); color: var(--ink); border-color: var(--line-strong); }
+.access-btn.assist { color: var(--accent); }
+.access-btn.full { color: #d97706; border-color: color-mix(in srgb, #d97706 40%, var(--line)); }
+.access-menu .model-scroll { padding-top: 4px; }
+.access-head { padding: 8px 10px 6px; font-size: 12px; color: var(--muted); }
+.access-item .model-text small { white-space: normal; }
+.access-item.full[aria-checked="true"], .access-item.full[aria-checked="true"] .model-ico, .access-item.full[aria-checked="true"] .model-check, .access-item.full[aria-checked="true"] small { color: #d97706; }
+@media (max-width: 720px) { .access-btn { height: 32px; padding: 0 10px 0 9px; } }

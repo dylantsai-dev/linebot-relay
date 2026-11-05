@@ -378,7 +378,7 @@ export async function setSessionPaused(key: string, paused: boolean) {
 /** Admin: choose the model for this session (null = default). */
 export async function setSessionModel(key: string, model: string | null) { return setSessionTuning(key, { model }) }
 /** Admin: set model / effort / service_tier together (null clears a field). */
-export async function setSessionTuning(key: string, patch: { model?: string | null; effort?: string | null; service_tier?: string | null }, note = '已更新') {
+export async function setSessionTuning(key: string, patch: { model?: string | null; effort?: string | null; service_tier?: string | null; approval_mode?: import('./lib/types').ApprovalMode | null }, note = '已更新') {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify(patch) })
   patchSession(data.session)
   toast(note, true)

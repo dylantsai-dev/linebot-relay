@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { URL } = require('node:url');
 const { AppServer, summarizeItem } = require('./lib/appserver');
+const APPROVAL_MODES = ['ask', 'assist', 'full']; // session.approval_mode; mapped to turn/start params in lib/appserver.js
 const { readRequest, prepareAttachments, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
 const { Settings } = require('./lib/settings');
@@ -513,7 +514,7 @@ async function runCodex(key, message, sessionId, input) {
     await appserver.subscribe(threadId);
     // Once sent, a lost response cannot prove the turn was not accepted.
     submitted = true;
-    const reply = await appserver.runTurn(threadId, input || message, config.timeout, { model: sessions[key]?.model, effort: sessions[key]?.effort, serviceTier: sessions[key]?.service_tier });
+    const reply = await appserver.runTurn(threadId, input || message, config.timeout, { model: sessions[key]?.model, effort: sessions[key]?.effort, serviceTier: sessions[key]?.service_tier, approvalMode: sessions[key]?.approval_mode });
     return { session: key, codex_session_id: threadId, reply, transport: 'app-server' };
   } catch (error) {
     if (!submitted && error.appserverConnection) return runCodexExec(key, message, sessionId);
@@ -528,9 +529,11 @@ function runCodexExec(key, message, sessionId) {
     const workdir = path.join(config.work, safeKey(key));
     fs.mkdirSync(workdir, { recursive: true });
     const output = path.join(config.data, `reply-${crypto.randomUUID()}.tmp`);
+    // CLI fallback is non-interactive: only 完全访问 lifts the sandbox; the other modes stay workspace-write.
+    const sandbox = sessions[key]?.approval_mode === 'full' ? 'danger-full-access' : 'workspace-write';
     const args = sessionId
-      ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="workspace-write"']
-      : ['exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-C', workdir];
+      ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${sandbox}"`]
+      : ['exec', '--json', '--skip-git-repo-check', '-s', sandbox, '-C', workdir];
     if (process.env.CODEX_MODEL) args.push('-m', process.env.CODEX_MODEL);
     args.push('-o', output);
     if (sessionId) args.push(sessionId);
@@ -1297,9 +1300,10 @@ const server = http.createServer(async (req, res) => {
           if (!principal.admin) throw failure('仅管理员可以修改会话', 403);
           if (!sessions[key]) throw failure('会话不存在', 404);
           const input = await readJson(req);
-          if (input.name === undefined && input.paused === undefined && input.model === undefined && input.effort === undefined && input.service_tier === undefined) throw failure('没有要修改的内容', 400);
+          if (input.name === undefined && input.paused === undefined && input.model === undefined && input.effort === undefined && input.service_tier === undefined && input.approval_mode === undefined) throw failure('没有要修改的内容', 400);
           if (input.name !== undefined && typeof input.name !== 'string') throw failure('名称格式不正确', 400);
           if (input.paused !== undefined && typeof input.paused !== 'boolean') throw failure('paused 应为 true 或 false', 400);
+          if (input.approval_mode !== undefined && input.approval_mode !== null && !APPROVAL_MODES.includes(input.approval_mode)) throw failure('批准模式不正确', 400);
           if (input.name !== undefined) {
             const name = input.name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
             if (name.length > 60) throw failure('名称最多 60 个字符', 400);
@@ -1319,6 +1323,7 @@ const server = http.createServer(async (req, res) => {
           for (const field of ['effort', 'service_tier']) {
             if (input[field] === null) delete sessions[key][field]; else if (input[field] !== undefined) sessions[key][field] = input[field].trim();
           }
+          if (input.approval_mode === null || input.approval_mode === 'ask') delete sessions[key].approval_mode; else if (input.approval_mode !== undefined) sessions[key].approval_mode = input.approval_mode;
           if (input.paused === true && !sessions[key].paused) { sessions[key].paused = true; sessions[key].paused_at = new Date().toISOString(); }
           if (input.paused === false) { delete sessions[key].paused; delete sessions[key].paused_at; }
           persist();

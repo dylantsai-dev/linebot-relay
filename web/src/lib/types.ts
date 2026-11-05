@@ -1,3 +1,4 @@
+export type ApprovalMode = 'ask' | 'assist' | 'full'
 export type SessionStatus = 'idle' | 'running' | 'queued'
 export interface Session {
   key: string
@@ -16,6 +17,8 @@ export interface Session {
   model?: string
   effort?: string
   service_tier?: string
+  /** Admin-chosen access mode; unset means 'ask' (请求批准). */
+  approval_mode?: ApprovalMode
   paused_at?: string
 }
 export interface Attachment {

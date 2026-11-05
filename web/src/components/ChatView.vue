@@ -10,6 +10,7 @@ import LiveTurn from './LiveTurn.vue'
 import PromptCard from './PromptCard.vue'
 import Icon from './Icon.vue'
 import ModelPicker from './ModelPicker.vue'
+import AccessPicker from './AccessPicker.vue'
 
 const emit = defineEmits<{ delete: [] }>()
 const scroller = ref<HTMLElement>(), textarea = ref<HTMLTextAreaElement>(), fileInput = ref<HTMLInputElement>()
@@ -249,6 +250,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <input ref="fileInput" type="file" multiple hidden @change="onPick">
           <button type="button" class="tool-btn" :data-tip="`添加附件 · 任意类型，最多 ${limits.files} 个，每个 ≤ ${fileSize(limits.fileBytes)}`" aria-label="添加附件" :disabled="drafts.length >= limits.files" @click="fileInput?.click()"><Icon name="plus" :size="17" /></button>
           <span v-if="drafts.length" class="tool-count">{{ drafts.length }}/{{ limits.files }}</span>
+          <AccessPicker v-if="isAdmin && selectedSession && !selectedSession.draft" :session="selectedSession" />
           <span class="spacer" />
           <button v-if="canStop" key="stop" type="button" class="send stop" :data-tip="state.stopping ? '正在停止…' : '停止当前回合'" aria-label="停止当前回合" :disabled="state.stopping" @click="pending || stopTurn()"><span class="stop-square" /></button>
           <button v-else key="send" class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!text.trim() && !drafts.length"><Icon name="send" :size="16" :stroke="2.2" /></button>
