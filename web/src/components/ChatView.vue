@@ -201,7 +201,6 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <button v-else class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else name="send" :size="16" :stroke="2.2" /></button>
         </div>
       </div>
-      <div class="hint"><span><kbd class="kbd">Enter</kbd> {{ busy ? '排队' : '发送' }} · <kbd class="kbd">Shift</kbd>+<kbd class="kbd">Enter</kbd> 换行</span><span class="hint-files">可粘贴或拖入任意文件 · 单个 ≤ {{ fileSize(limits.fileBytes) }}</span></div>
     </form>
     <Transition name="fade">
       <div v-if="dragging" class="drop-overlay"><div class="drop-card"><Icon name="upload" :size="26" /><strong>松开以添加附件</strong><span>任意类型 · 最多 {{ limits.files }} 个</span></div></div>
