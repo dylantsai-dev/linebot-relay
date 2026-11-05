@@ -357,6 +357,19 @@ export async function linkSession(key: string, codexId: string) {
   else await selectSession(key)
 }
 
+/** Link many threads at once (全选关联): one PUT each, one sessions refresh, then open the first. */
+export async function linkSessions(pairs: { key: string; id: string }[]) {
+  const failed: { key: string; error: string }[] = []
+  for (const { key, id } of pairs) {
+    try { await api(`/api/sessions/${keyPath(key)}`, { method: 'PUT', body: JSON.stringify({ codex_session_id: id }) }); state.drafts.delete(key) }
+    catch (e) { failed.push({ key, error: (e as Error).message }) }
+  }
+  await refreshSessions().catch(() => {})
+  const first = pairs.find(p => !failed.some(f => f.key === p.key))
+  if (first && state.selected !== first.key) await selectSession(first.key)
+  return failed
+}
+
 /** The edit dialog registers its opener here so the sidebar and the header can both open it. */
 let sessionEditor: ((s: Session) => void) | null = null
 export function registerSessionEditor(fn: (s: Session) => void) { sessionEditor = fn }
