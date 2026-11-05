@@ -40,10 +40,20 @@ async function boot(name, extra = {}) {
   const linked = new Map();
   const call = async (auth, route, opts = {}) => {
     const b = opts.body;
-    if (opts.method === 'POST' && (route === '/webhook' || route === '/api/send') && b && typeof b.session === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(b.session) && b.codex_session_id === undefined && !opts.noLink && (auth === token || adminTokens.has(auth))) {
+    const hookRoute = /^\/webhook(\/queue|\/steer)?$/.exec(route);
+    if (opts.method === 'POST' && (hookRoute || route === '/api/send') && b && typeof b.session === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(b.session) && b.codex_session_id === undefined && !opts.noLink && (auth === token || adminTokens.has(auth))) {
       if (!linked.has(b.session)) linked.set(b.session, (fs.existsSync(path.join(dir, 'data', 'sessions.json')) && JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))[b.session]) ? null
         : raw(token, `/api/sessions/${encodeURIComponent(b.session)}`, { method: 'PUT', body: { codex_session_id: newThread(path.join(dir, 'codex-home')) } }));
       await linked.get(b.session);
+    }
+    // The shared /webhook is retired: tests that used it now go through the session's own hook.
+    if (hookRoute && opts.method === 'POST' && (auth === token || adminTokens.has(auth))) {
+      const sessionKey = b?.session ?? opts.form?.get('session');
+      const hook = await raw(token, `/api/sessions/${encodeURIComponent(sessionKey)}/webhook`);
+      if (hook.status !== 200) return hook;
+      const body = b && { ...b, ...(hookRoute[1] ? { mode: hookRoute[1].slice(1) } : {}) };
+      if (body) delete body.session;
+      return raw(hook.body.webhook.secret, hook.body.webhook.path, { ...opts, body });
     }
     return raw(auth, route, opts);
   };
@@ -98,10 +108,32 @@ async function main() {
   assert.equal((await call(token, '/sessions')).status, 200);
   // Unknown/unlinked sessions are rejected and no Codex thread is created, for every caller.
   const before = fs.existsSync(path.join(dir, 'codex-home', 'sessions')) ? fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length : 0;
-  for (const route of ['/webhook', '/api/send']) {
-    const unknown = await call(token, route, { method: 'POST', body: { session: 'never-linked', message: 'hi' }, noLink: true });
-    assert.equal(unknown.status, 404, route); assert.match(unknown.body.error, /不会新建会话/);
+  const unknown = await call(token, '/api/send', { method: 'POST', body: { session: 'never-linked', message: 'hi' }, noLink: true });
+  assert.equal(unknown.status, 404); assert.match(unknown.body.error, /不会新建会话/);
+  assert.equal((await call(token, '/api/sessions/never-linked/webhook')).status, 404, 'no hook for a missing session');
+
+  // Per-session webhooks: own URL + own key; the shared /webhook is retired.
+  for (const route of ['/webhook', '/webhook/queue', '/webhook/steer']) {
+    const old = await fetch(base + route, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ session: 's1', message: 'old' }) });
+    assert.equal(old.status, 410, route); assert.match((await old.json()).error, /已停用/);
   }
+  const hook1 = (await call(token, '/api/sessions/s1/webhook')).body.webhook, hook2 = (await call(admin, '/api/sessions/s2/webhook')).body.webhook;
+  assert.match(hook1.path, /^\/hook\/[0-9a-f]{24}$/); assert.match(hook1.secret, /^dbk_[A-Za-z0-9_-]{32}$/); assert.notEqual(hook1.path, hook2.path);
+  assert.deepEqual((await call(admin, '/api/sessions/s1/webhook')).body.webhook, hook1, 'stable once created');
+  const viaHook = await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'via hook', session: 's2' } });
+  assert.equal(viaHook.status, 200); assert.equal(viaHook.body.session, 's1', 'the hook decides the session'); assert.match(viaHook.body.reply, /echo:via hook/);
+  assert.equal((await call(hook2.secret, hook1.path, { method: 'POST', body: { message: 'wrong key' } })).status, 401, "another session's key");
+  assert.equal((await call(token, hook1.path, { method: 'POST', body: { message: 'admin token' } })).status, 401, 'WEBHOOK_TOKEN is not a hook key');
+  assert.equal((await call(hook1.secret, '/hook/' + '0'.repeat(24), { method: 'POST', body: { message: 'x' } })).status, 401);
+  assert.equal((await call(hook1.secret, '/api/sessions')).status, 401, 'a hook key opens nothing else');
+  assert.equal((await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'bind', codex_session_id: '01a1a610-0000-7000-8000-00000000abcd' } })).status, 403);
+  const hookListed = (await call(admin, '/api/sessions')).body.sessions.find(s => s.key === 's1');
+  assert.ok(hookListed && !('hook' in hookListed), 'listing never carries the key');
+  assert.ok(!JSON.stringify((await call(token, '/sessions')).body).includes(hook1.secret));
+  const rotated = (await call(admin, '/api/sessions/s1/webhook/rotate', { method: 'POST' })).body.webhook;
+  assert.equal(rotated.path, hook1.path, 'URL survives a reset'); assert.notEqual(rotated.secret, hook1.secret);
+  assert.equal((await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'old key' } })).status, 401, 'old key dies at once');
+  assert.equal((await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'new key' } })).status, 200);
   assert.equal(fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length, before, 'no thread was started');
   assert.ok(!JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))['never-linked']);
 
@@ -132,7 +164,8 @@ async function main() {
   assert.equal((await call(a, '/api/sessions/s2/history')).status, 404);
   assert.equal((await call(a, '/api/sessions/never-made/history')).status, 404);
   assert.equal((await call(a, '/api/send', { method: 'POST', body: { session: 's2', message: 'sneak' } })).status, 404);
-  assert.equal((await call(a, '/webhook', { method: 'POST', body: { session: 's2', message: 'sneak' } })).status, 404);
+  assert.equal((await call(a, '/api/sessions/s1/webhook')).status, 403, 'only admins see a webhook');
+  assert.equal((await call(a, '/api/sessions/s1/webhook/rotate', { method: 'POST' })).status, 403);
   const brandNew = await call(a, '/api/send', { method: 'POST', body: { session: 'brand-new', message: 'hi' } });
   assert.equal(brandNew.status, 404); assert.equal(brandNew.body.error, '会话不存在');
   assert.equal((await call(a, '/api/send', { method: 'POST', body: { session: 's1', message: 'bind', codex_session_id: '01a1a610-0000-7000-8000-00000000abcd' } })).status, 403);
@@ -192,8 +225,6 @@ async function main() {
   assert.equal((await call(b, '/api/sessions/s1/stream')).status, 404, 'no stream without a grant');
   for (const [method, route] of [['GET', '/api/sessions/s1/queue'], ['POST', '/api/sessions/s1/interrupt'], ['DELETE', '/api/sessions/s1/queue/00000000-0000-4000-8000-000000000000']])
     assert.equal((await call(b, route, { method })).status, 404, `no ${method} ${route} without a grant`);
-  assert.equal((await call(b, '/webhook/steer', { method: 'POST', body: { session: 's1', message: 'sneak' } })).status, 404);
-  assert.equal((await call(b, '/webhook/queue', { method: 'POST', body: { session: 's1', message: 'sneak' } })).status, 404);
   assert.deepEqual((await call(a, '/api/sessions/s1/queue')).body.queue, []);
   assert.equal((await call(a, '/api/sessions/s1/queue/00000000-0000-4000-8000-000000000000', { method: 'DELETE' })).status, 404);
   assert.equal((await call(a, '/api/sessions/s1/interrupt', { method: 'POST' })).status, 503, 'stop needs the app-server');
@@ -251,10 +282,8 @@ async function main() {
   for (const [who, key] of [[a, 'pre-granted'], [a, 'never-made'], [b, 'bob-new'], [b, 's1']]) {
     const attempts = [
       ['/api/send', { method: 'POST', body: { session: key, message: 'make it' } }],
-      ['/webhook', { method: 'POST', body: { session: key, message: 'make it' } }],
-      ['/webhook', { method: 'POST', body: { session: key, message: 'make it', callback_url: 'http://127.0.0.1:9/cb' } }],
     ];
-    for (const route of ['/api/send', '/webhook']) {
+    for (const route of ['/api/send']) {
       const upload = new FormData();
       upload.append('session', key); upload.append('message', 'with file'); upload.append('file', new Blob(['x']), 'x.txt');
       attempts.push([route, { method: 'POST', form: upload }]);

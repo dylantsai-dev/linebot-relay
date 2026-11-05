@@ -689,11 +689,16 @@ function authenticate(req) {
 }
 // A session exists once it has a Codex binding, a turn running/queued, or local history. Grants alone do not create it.
 function sessionExists(key) { return !!sessions[key] || live.has(key) || fs.existsSync(path.join(historyDir, `${safeKey(key)}.jsonl`)); }
-function visibleKeys(principal) { return principal.admin ? null : new Set(users.grants(principal.user.id)); }
+function visibleKeys(principal) { return principal.admin ? null : principal.kind === 'hook' ? new Set([principal.session]) : new Set(users.grants(principal.user.id)); }
 // Only admins (and WEBHOOK_TOKEN) create sessions. For normal users a key that is ungranted or does not
 // exist yet is reported as missing (404), so they can neither create sessions nor probe for them.
 function userCanUse(principal, key) { return principal.admin || (users.isGranted(principal.user.id, key) && sessionExists(key)); }
 function authorizeSend(principal, body) {
+  if (principal.kind === 'hook') {
+    if (body.session !== principal.session) throw failure('会话不存在', 404);
+    if (body.codex_session_id !== undefined) throw failure('Webhook 不能绑定会话 ID', 403);
+    return;
+  }
   if (principal.admin) return;
   if (!userCanUse(principal, body.session)) throw failure('会话不存在', 404);
   if (body.codex_session_id !== undefined) throw failure('仅管理员可以绑定会话 ID', 403);
@@ -708,7 +713,7 @@ function fileVisible(principal, rawPath) {
 }
 // Public view of a session: the avatar file name becomes a signed URL (an <img> cannot send a bearer token).
 function publicSession(entry, principal) {
-  const { avatar, ...rest } = entry;
+  const { avatar, hook, ...rest } = entry;
   const url = avatar ? media.url(path.join(avatarDir, avatar), [avatarDir], entry.key, principalUid(principal)) : null;
   return url ? { ...rest, avatar_url: url } : rest;
 }
@@ -902,8 +907,20 @@ function streamSession(req, res, key, principal) {
 }
 
 // /webhook takes mode from the body (default 排队); /webhook/queue and /webhook/steer fix it by path.
+// The old shared endpoints (session in the body, WEBHOOK_TOKEN as the key) are retired; each session now
+// has its own URL /hook/<id> and its own key, so a sender can reach only that one session.
 const WEBHOOK_ROUTES = ['/webhook', '/webhook/queue', '/webhook/steer'];
-const SEND_ROUTES = [...WEBHOOK_ROUTES, '/api/send'];
+const SEND_ROUTES = ['/hook', '/api/send'];
+const HOOK_ROUTE = /^\/hook\/([0-9a-f]{24})$/;
+function newHook(id) { return { id: id || crypto.randomBytes(12).toString('hex'), secret: `dbk_${crypto.randomBytes(24).toString('base64url')}`, created_at: new Date().toISOString() }; }
+function hookKey(id) { return Object.keys(sessions).find(key => sessions[key].hook?.id === id) || null; }
+function hookAuthorized(req, key) {
+  const secret = sessions[key]?.hook?.secret;
+  if (!secret) return false;
+  const digest = value => crypto.createHash('sha256').update(String(value)).digest();
+  return crypto.timingSafeEqual(digest(req.headers.authorization || ''), digest(`Bearer ${secret}`));
+}
+function hookView(key) { const { id, secret, created_at } = sessions[key].hook; return { path: `/hook/${id}`, secret, created_at }; }
 function sendMode(route, body) {
   if (route === '/webhook/queue') return 'queue';
   if (route === '/webhook/steer') return 'steer';
@@ -929,19 +946,27 @@ const server = http.createServer(async (req, res) => {
     route = rawPath.startsWith('/api/sessions/') ? rawPath : url.pathname;
     if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console' || route.startsWith('/console/'))) { serveConsole(req, res, route); return; }
     if (req.method === 'GET' && route === '/health') { send(res, 200, { ok: true }); record(200); return; }
-    if (!(req.method === 'GET' && route === '/sessions') && !(req.method === 'POST' && WEBHOOK_ROUTES.includes(route)) && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
+    if (req.method === 'POST' && WEBHOOK_ROUTES.includes(route)) { send(res, 410, { error: '旧的 /webhook 已停用，请使用会话自己的 Webhook 地址和密钥（在控制台会话页的 Webhook 里查看）' }); log({ request_id: requestId, status: 410, path: route }); return; }
+    const hookMatch = req.method === 'POST' ? HOOK_ROUTE.exec(route) : null;
+    let hookSessionKey = null;
+    if (hookMatch) {
+      route = '/hook';
+      hookSessionKey = hookKey(hookMatch[1]);
+      // Unknown id and wrong key answer the same, so ids cannot be probed.
+      if (!hookSessionKey || !hookAuthorized(req, hookSessionKey)) { send(res, 401, { error: 'Unauthorized' }); record(401); return; }
+    } else if (!(req.method === 'GET' && route === '/sessions') && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
     if (req.method === 'GET' && route === '/api/auth/status') { send(res, 200, { needs_setup: !users.hasAdmin() }); return; }
     if (req.method === 'POST' && route === '/api/auth/login') {
       const input = await readJson(req);
       send(res, 200, await users.login(input.username, input.password)); return;
     }
     if ((req.method === 'GET' || req.method === 'HEAD') && route.startsWith('/api/media/')) { serveMedia(req, res, url); return; }
-    const principal = authenticate(req);
+    const principal = hookSessionKey ? { kind: 'hook', admin: false, user: null, session: hookSessionKey } : authenticate(req);
     if (!principal) { send(res, 401, { error: 'Unauthorized' }); record(401); return; }
     const visible = visibleKeys(principal);
     if (route === '/sessions') {
       const listing = await sessionListing();
-      send(res, 200, { sessions: Object.fromEntries(listing.filter(s => sessions[s.key] && (!visible || visible.has(s.key))).map(({ key, status, queued, ...entry }) => [key, entry])) }); record(200); return;
+      send(res, 200, { sessions: Object.fromEntries(listing.filter(s => sessions[s.key] && (!visible || visible.has(s.key))).map(({ key, status, queued, hook, avatar, ...entry }) => [key, entry])) }); record(200); return;
     }
     if (route.startsWith('/api/') && route !== '/api/send') {
       if (req.method === 'GET' && route === '/api/files') {
@@ -992,7 +1017,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
       if (match) {
         let key;
         try {
@@ -1014,6 +1039,13 @@ const server = http.createServer(async (req, res) => {
           persist();
           if (appserver) void appserver.subscribe(input.codex_session_id).catch(() => {});
           send(res, existed ? 200 : 201, { session: { key, ...sessions[key] } }); return;
+        }
+        // Admin: the session's own webhook (URL + key), created on first view; rotate replaces the key at once.
+        if ((req.method === 'GET' && match[2] === '/webhook') || (req.method === 'POST' && match[2] === '/webhook/rotate')) {
+          if (!principal.admin) throw failure('仅管理员可以查看会话的 Webhook', 403);
+          if (!sessions[key]) throw failure('会话不存在', 404);
+          if (!sessions[key].hook || req.method === 'POST') { sessions[key].hook = newHook(sessions[key].hook?.id); persist(); }
+          send(res, 200, { webhook: hookView(key) }); return;
         }
         // Admin: rename a session (display name only; the key and the Codex thread stay the same).
         if (req.method === 'PATCH' && !match[2]) {
@@ -1062,6 +1094,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') { send(res, 404, { error: 'Not found' }); record(404); return; }
     const parsed = await readRequest(req, config);
     body = parsed.body;
+    if (principal.kind === 'hook' && body && typeof body === 'object') body.session = principal.session;
     if (body && typeof body === 'object') body._fileCount = parsed.files.length;
     validate(body);
     const mode = sendMode(route, body);

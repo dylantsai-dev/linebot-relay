@@ -136,7 +136,6 @@ export const rememberChoice = () => !!storageGet(localStorage, TOKEN_KEY)
 /** Server-side logout revokes a user token; the webhook token cannot be revoked. */
 export function logout(revoke = true) {
   if (revoke && state.me?.auth === 'user') void fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.token}` } }).catch(() => {})
-  webhookTokenCache = null
   users.list = []; users.loaded = false
   epoch++
   stopPolling()
@@ -542,15 +541,15 @@ function startPolling() {
 }
 function stopPolling() { while (timers.length) clearInterval(timers.pop()) }
 
-/* ---------- webhook token for the "含 Token" copy option ---------- */
-let webhookTokenCache: string | null = null
-/** Token login: the token itself. Admin accounts fetch it on demand; other users never get it. */
-export async function webhookToken(): Promise<string | null> {
-  if (!isAdmin.value) return null
-  if (state.me?.auth === 'token') return state.token
-  webhookTokenCache ??= (await api<{ token: string }>('/api/webhook-token')).token
-  return webhookTokenCache
-}
+/* ---------- per-session webhook (admin) ---------- */
+export interface SessionWebhook { path: string; secret: string; created_at: string }
+let webhookViewer: ((s: Session) => void) | null = null
+export function registerWebhookViewer(fn: (s: Session) => void) { webhookViewer = fn }
+export function openWebhook(s: Session) { webhookViewer?.(s) }
+/** Created on first view; each session has its own URL and key. */
+export async function sessionWebhook(key: string) { return (await api<{ webhook: SessionWebhook }>(`/api/sessions/${keyPath(key)}/webhook`)).webhook }
+/** Replaces the key; the old one stops working immediately. The URL stays the same. */
+export async function rotateWebhook(key: string) { return (await api<{ webhook: SessionWebhook }>(`/api/sessions/${keyPath(key)}/webhook/rotate`, { method: 'POST' })).webhook }
 
 /* ---------- users (admin) ---------- */
 export const users = reactive({ list: [] as User[], loaded: false, loading: false, error: '' })

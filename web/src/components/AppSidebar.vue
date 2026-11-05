@@ -2,10 +2,9 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandMark from './BrandMark.vue'
 import Icon from './Icon.vue'
-import CopyMenu from './CopyMenu.vue'
 import SessionAvatar from './SessionAvatar.vue'
 import {
-  editSession, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
+  editSession, openWebhook, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
   logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink,
 } from '../store'
 import { shortTime, time } from '../lib/format'
@@ -39,15 +38,6 @@ function keys(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); toggleSidebar() }
   if (e.key === 'Escape') { if (userOpen.value) userOpen.value = false; else if (state.drawer) state.drawer = false }
 }
-
-/* ---- copy-webhook menu ---- */
-const menuAnchor = ref<HTMLElement | null>(null), menuKey = ref('')
-function openMenu(e: MouseEvent, key: string) {
-  const el = e.currentTarget as HTMLElement
-  if (menuAnchor.value === el) { closeMenu(false); return }
-  menuAnchor.value = el; menuKey.value = key
-}
-function closeMenu(focus: boolean) { const a = menuAnchor.value; menuAnchor.value = null; if (focus) a?.focus({ preventScroll: true }) }
 
 /* ---- user menu + change password ---- */
 const name = computed(() => state.me?.user?.username || '访问令牌')
@@ -111,7 +101,7 @@ async function savePassword() {
             <div class="row-actions">
               <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="编辑名称和头像" :aria-label="`编辑 ${s.name || s.key}`" @click="editSession(s)"><Icon name="pencil" :size="13" /></button>
               <button v-if="s.codex_session_id" type="button" class="mini" data-tip="复制会话 ID" :aria-label="`复制 ${s.key} 的会话 ID`" @click="copy(s.codex_session_id)"><Icon name="copy" :size="13" /></button>
-              <button type="button" class="mini" data-tip="复制 Webhook" :aria-label="`复制 ${s.key} 的 Webhook`" aria-haspopup="menu" @click="openMenu($event, s.key)"><Icon name="webhook" :size="13" /></button>
+              <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="Webhook" :aria-label="`${s.name || s.key} 的 Webhook`" aria-haspopup="dialog" @click="openWebhook(s)"><Icon name="webhook" :size="13" /></button>
             </div>
           </div>
         </TransitionGroup>
@@ -143,7 +133,6 @@ async function savePassword() {
       </Transition>
     </div>
 
-    <CopyMenu :anchor="menuAnchor" :session-key="menuKey" @close="closeMenu" />
 
     <dialog ref="dialog" class="dialog" @click.self="dialog?.close()">
       <form @submit.prevent="savePassword">

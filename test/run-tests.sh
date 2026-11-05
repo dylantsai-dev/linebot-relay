@@ -64,6 +64,18 @@ async function main() {
       if (!linkedKeys.has(parsed.session)) linkedKeys.set(parsed.session, rawRequest(`/api/sessions/${/^\.+$/.test(parsed.session) ? parsed.session.replace(/\./g, '%252e') : encodeURIComponent(parsed.session)}`, { method: 'PUT', body: JSON.stringify({ codex_session_id: newThread(env.CODEX_HOME) }) }));
       await linkedKeys.get(parsed.session);
     }
+    // The shared /webhook is retired: send through the session's own hook; requests that cannot name a
+    // valid session go to /api/send, which applies the same validation.
+    const hookRoute = /^\/webhook(\/queue|\/steer)?$/.exec(route);
+    if (hookRoute && options.method === 'POST' && options.headers?.Authorization === undefined) {
+      const key = parsed?.session;
+      const hook = typeof key === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(key) ? await rawRequest(`/api/sessions/${/^\.+$/.test(key) ? key.replace(/\./g, '%252e') : encodeURIComponent(key)}/webhook`) : null;
+      if (hook?.status === 200) {
+        const { session, ...rest } = parsed;
+        return rawRequest(hook.body.webhook.path, { ...options, body: JSON.stringify({ ...rest, ...(hookRoute[1] ? { mode: hookRoute[1].slice(1) } : {}) }), headers: { ...options.headers, Authorization: `Bearer ${hook.body.webhook.secret}` } });
+      }
+      route = '/api/send';
+    }
     return rawRequest(route, options);
   }
   async function rawRequest(route, options = {}) {
@@ -81,9 +93,9 @@ async function main() {
   assert.equal(await new Promise(resolve => noToken.once('exit', resolve)), 1);
   await start();
   assert.deepEqual(await request('/health', { headers: { Authorization: '' } }), { status: 200, body: { ok: true } });
-  for (const route of ['/sessions', '/webhook']) {
-    assert.equal((await request(route, { method: route === '/webhook' ? 'POST' : 'GET', headers: { Authorization: 'Bearer wrong' } })).status, 401);
-  }
+  assert.equal((await request('/sessions', { headers: { Authorization: 'Bearer wrong' } })).status, 401);
+  assert.equal((await request('/webhook', { method: 'POST', headers: { Authorization: 'Bearer wrong' } })).status, 410, 'the shared webhook is retired');
+  assert.equal((await request('/hook/' + 'a'.repeat(24), { method: 'POST', headers: { Authorization: 'Bearer wrong' } })).status, 401);
   assert.equal((await request('/unknown')).status, 404);
   assert.equal((await request('/')).status, 404);
   for (const route of ['/console', '/console/']) {
@@ -127,7 +139,7 @@ async function main() {
   assert.equal(stats.running, 0); assert.equal(stats.queued, 0);
   const recent = (await request('/api/requests')).body.requests;
   assert.ok(recent.some(entry => entry.source === 'console' && entry.ok));
-  assert.ok(recent.every(entry => entry.path === '/api/send' || entry.path === '/webhook'));
+  assert.ok(recent.every(entry => entry.path === '/api/send' || entry.path === '/hook'));
   for (const body of [null, {}, { session: '../escape', message: 'hi' }, { session: 'x', message: '' }, { session: 'x', message: '   ' }, { session: 'x', message: 4 }, { session: 'x', message: 'hi', codex_session_id: 'bad' }, { session: 'x', message: 'hi', callback_url: 'file:///tmp/x' }]) assert.equal((await post(body)).status, 400);
   assert.equal((await request('/webhook', { method: 'POST', body: '{' })).status, 400);
   assert.equal((await post({ session: 'large', message: 'x'.repeat(1024 * 1024) })).status, 413);

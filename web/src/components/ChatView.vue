@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook } from '../store'
 import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
@@ -8,7 +8,6 @@ import { fileSize } from '../lib/format'
 import MessageItem from './MessageItem.vue'
 import LiveTurn from './LiveTurn.vue'
 import Icon from './Icon.vue'
-import CopyMenu from './CopyMenu.vue'
 
 const emit = defineEmits<{ delete: [] }>()
 const scroller = ref<HTMLElement>(), textarea = ref<HTMLTextAreaElement>(), fileInput = ref<HTMLInputElement>()
@@ -117,9 +116,6 @@ const retry = () => selectSession(state.selected)
 const fresh = computed(() => !!state.selected && !state.historyLoading && !state.historyError && !items.value.length && !optimistic.value && !running.value && !inflight.value.length)
 const greeting = computed(() => { const h = new Date(state.now || Date.now()).getHours(); return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 13 ? '中午好' : h < 18 ? '下午好' : '晚上好' })
 const who = computed(() => state.me?.user?.username || '')
-const menuAnchor = ref<HTMLElement | null>(null)
-function toggleCopyMenu(e: MouseEvent) { const el = e.currentTarget as HTMLElement; menuAnchor.value = menuAnchor.value === el ? null : el }
-function closeCopyMenu(focus: boolean) { const a = menuAnchor.value; menuAnchor.value = null; if (focus) a?.focus({ preventScroll: true }) }
 // Codex-style: while a turn runs and nothing is typed, the send button becomes the stop button.
 const canStop = computed(() => (busy.value || !!pending.value) && !selectedSession.value?.draft && !text.value.trim() && !drafts.value.length)
 // Switching sessions cross-fades the conversation: the old one fades out quickly, the new one (from cache when
@@ -141,13 +137,12 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
         </div>
         <span class="spacer" />
         <span v-if="state.historySource === 'local'" class="src-pill" data-tip="ディランボット 三代目 未连接，显示本地记录">本地记录</span>
-        <button class="btn ghost icon-only" data-tip="复制 Webhook / curl" aria-label="复制 Webhook" aria-haspopup="menu" :aria-expanded="!!menuAnchor" @click="toggleCopyMenu"><Icon name="webhook" /></button>
+        <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="Webhook" aria-label="Webhook" aria-haspopup="dialog" @click="openWebhook(selectedSession)"><Icon name="webhook" /></button>
         <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="编辑名称和头像" aria-label="编辑会话" @click="editSession(selectedSession)"><Icon name="pencil" /></button>
         <button v-if="canCreate" class="btn ghost icon-only danger-hover" data-tip="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
       </template>
       <span v-else class="spacer" />
     </header>
-    <CopyMenu :anchor="menuAnchor" :session-key="state.selected" @close="closeCopyMenu" />
 
     <div ref="scroller" class="messages">
       <Transition name="conv" mode="out-in" @enter="toBottom">

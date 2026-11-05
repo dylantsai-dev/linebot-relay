@@ -701,10 +701,11 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 
 /* Session switch: quick fade out, soft fade-up in. */
 .conv-leave-active { transition: opacity .1s var(--ease); }
-.conv-enter-active { transition: opacity .28s var(--ease), transform .32s var(--ease); }
-.conv-leave-to { opacity: 0; }
-.conv-enter-from { opacity: 0; transform: translateY(8px); }
-@media (prefers-reduced-motion: reduce) { .conv-enter-active { transition: opacity .15s linear; } .conv-enter-from { transform: none; } }
+/* Opacity only: a transform on content inside the scroller changes its scroll height, so the browser
+   re-clamps scrollTop every frame while the GPU moves the layer, which reads as a shake on switch. */
+.conv-enter-active { transition: opacity .24s var(--ease); }
+.conv-leave-to, .conv-enter-from { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .conv-enter-active { transition: opacity .12s linear; } }
 .conv-leave-active.is-loading { transition: none; } /* skeleton gives way to content without a blank beat */
 
 /* Session avatars */
@@ -719,3 +720,21 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .sd-avatar-text { display: flex; flex-direction: column; gap: 2px; }
 .sd-avatar-text .field-hint { margin-top: 4px; }
 .sd-avatar-actions { display: flex; gap: 6px; }
+
+/* ---------- per-session webhook dialog ---------- */
+.wh-sub { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); }
+.wh-sub .s-avatar { margin-top: 3px; }
+.wh-sub b { color: var(--ink); font-weight: 500; }
+.wh-rows { display: grid; gap: 10px; margin-top: 20px; }
+.wh-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 12px; }
+.wh-label { font-size: 12.5px; color: var(--muted); }
+.wh-box { display: flex; align-items: center; gap: 2px; min-width: 0; height: 36px; padding: 0 4px 0 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-muted); }
+.wh-box.plain { background: transparent; border-style: dashed; }
+.wh-val { flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.wh-note { flex: none; padding-right: 8px; font-size: 11.5px; color: var(--faint); }
+.wh-skel { animation: wh-pulse 1.2s ease-in-out infinite; }
+@keyframes wh-pulse { 50% { opacity: .5; } }
+.wh-actions { align-items: center; }
+.wh-warn { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--red); min-width: 0; }
+.wh-warn .icon { flex: none; }
+@media (max-width: 560px) { .wh-row { grid-template-columns: 1fr; gap: 4px; } .wh-note { display: none; } .wh-actions { flex-wrap: wrap; } }

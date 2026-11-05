@@ -87,10 +87,19 @@ async function post(session, message, codex_session_id, extra = {}) {
   if (extra && extra.__noLink) { extra = { ...extra }; delete extra.__noLink; }
   return rawPost(session, message, codex_session_id, extra);
 }
-function rawPost(session, message, codex_session_id, extra = {}) {
+// The shared /webhook is retired: posts go through the session's own hook when it has one, else
+// /api/send (binding a key to a thread, or validation cases), which applies the same checks.
+async function hookFor(session) {
+  if (typeof session !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(session)) return null;
+  const found = await api('GET', `/api/sessions/${encodeURIComponent(session)}/webhook`);
+  return found.status === 200 ? found.body.webhook : null;
+}
+async function rawPost(session, message, codex_session_id, extra = {}) {
+  const key = Buffer.isBuffer(extra) ? /name="session"\r\n\r\n([^\r]+)\r\n/.exec(extra.toString('latin1'))?.[1] : session;
+  const hook = codex_session_id ? null : await hookFor(key);
   return new Promise((resolve, reject) => {
     const req = new EventEmitter();
-    Object.assign(req, { url: '/webhook', method: 'POST', headers: { authorization: 'Bearer test-token', ...(Buffer.isBuffer(extra) ? {'content-type':'multipart/form-data; boundary=app-upload'} : {}) } });
+    Object.assign(req, { url: hook ? hook.path : '/api/send', method: 'POST', headers: { authorization: hook ? `Bearer ${hook.secret}` : 'Bearer test-token', ...(Buffer.isBuffer(extra) ? {'content-type':'multipart/form-data; boundary=app-upload'} : {}) } });
     const res = { headersSent: false,
       writeHead(status) { this.status = status; this.headersSent = true; },
       end(text) { resolve({ status: this.status, body: JSON.parse(text) }); },
@@ -103,10 +112,22 @@ function rawPost(session, message, codex_session_id, extra = {}) {
   });
 }
 
-function api(method, route, body) {
+async function api(method, route, body) {
+  const hookRoute = method === 'POST' && /^\/webhook(\/queue|\/steer)?$/.exec(route);
+  if (hookRoute) {
+    const hook = await hookFor(body?.session);
+    if (hook) {
+      const { session, ...rest } = body;
+      return rawApi(method, hook.path, { ...rest, ...(hookRoute[1] ? { mode: hookRoute[1].slice(1) } : {}) }, `Bearer ${hook.secret}`);
+    }
+    route = '/api/send';
+  }
+  return rawApi(method, route, body);
+}
+function rawApi(method, route, body, authorization = 'Bearer test-token') {
   return new Promise((resolve, reject) => {
     const req = new EventEmitter();
-    Object.assign(req, { url: route, method, headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' } });
+    Object.assign(req, { url: route, method, headers: { authorization, 'content-type': 'application/json' } });
     const res = { writeHead(status) { this.status = status; }, end(text) { resolve({ status: this.status, body: JSON.parse(text) }); } };
     handler(req, res).catch(reject);
     queueMicrotask(() => { if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); });
@@ -196,7 +217,7 @@ async function main() {
   assert.ok(fake.requests.some(r => r.method === 'thread/resume' && r.params.threadId === externalId));
   let externalHistory = (await get('/api/sessions/external/history')).body;
   assert.equal(externalHistory.source, 'thread');
-  assert.equal(externalHistory.history[0].source, 'webhook');
+  assert.equal(externalHistory.history[0].source, 'console', 'bound through /api/send');
   const reads = () => fake.requests.filter(r => r.method === 'thread/read').length;
   const cachedReads = reads();
   await get('/api/sessions/external/history');

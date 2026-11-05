@@ -89,6 +89,18 @@ async function request(url, body, auth = 'Bearer test-secret', method = body ===
     await linkedKeys.get(body.session);
   }
   if (body && body.__noLink) { body = { ...body }; delete body.__noLink; }
+  // The shared /webhook is retired: send through the session's own hook (URL + key). Requests that
+  // cannot name a valid session go to /api/send, which applies the same validation.
+  const hookRoute = /^\/webhook(\/queue|\/steer)?$/.exec(url);
+  if (hookRoute && method === 'POST' && auth === 'Bearer test-secret') {
+    const key = multipartKey || (body && !Buffer.isBuffer(body) ? body.session : undefined);
+    const hook = typeof key === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(key) ? await rawRequest(`/api/sessions/${encodeURIComponent(key)}/webhook`, undefined, auth) : null;
+    if (hook?.status === 200) {
+      if (body && !Buffer.isBuffer(body)) { body = { ...body, ...(hookRoute[1] ? { mode: hookRoute[1].slice(1) } : {}) }; delete body.session; }
+      return rawRequest(hook.body.webhook.path, body, `Bearer ${hook.body.webhook.secret}`, method, contentType);
+    }
+    url = '/api/send';
+  }
   return rawRequest(url, body, auth, method, contentType);
 }
 function rawRequest(url, body, auth = 'Bearer test-secret', method = body === undefined ? 'GET' : 'POST', contentType) {
@@ -215,7 +227,7 @@ async function main() {
   const logs = (await request('/api/requests?limit=500')).body.requests;
   assert.ok(logs.some(e => e.source === 'console' && e.status === 200));
   assert.ok(logs.some(e => e.source === 'webhook' && e.status === 504 && !e.ok));
-  assert.ok(logs.every(e => ['/webhook', '/api/send'].includes(e.path) && e.request_id && typeof e.duration_ms === 'number'));
+  assert.ok(logs.every(e => ['/hook', '/api/send'].includes(e.path) && e.request_id && typeof e.duration_ms === 'number'));
   assert.ok(!JSON.stringify(logs).includes('test-secret'));
   const stats = (await request('/api/stats')).body;
   assert.equal(stats.today.calls, logs.length);
