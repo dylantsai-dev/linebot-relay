@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast, loadOlder } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, requestLink, editSession, openWebhook, toast, loadOlder, backToMobileList } from '../store'
 import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
@@ -249,16 +249,16 @@ const greeting = computed(() => { const h = new Date(state.now || Date.now()).ge
 const who = computed(() => state.me?.user?.username || '')
 // Codex-style: while a turn runs and nothing is typed, the send button becomes the stop button.
 const canStop = computed(() => (busy.value || !!pending.value) && !selectedSession.value?.draft && !text.value.trim() && !drafts.value.length && !quotes.value.length)
-// Switching sessions cross-fades the conversation: the old one fades out quickly, the new one (from cache when
-// visited before, otherwise skeleton then content) fades in with a small rise, already scrolled to the bottom.
-const viewKey = computed(() => !state.selected ? 'home' : `${state.selected}:${items.value.length || !state.historyLoading ? 'ready' : 'loading'}`)
+// Switching sessions cross-fades the conversation. Key is the session only — never flip
+// `:loading`/`:ready` (that remounted mid out-in and could leave the skeleton stuck forever).
+const viewKey = computed(() => state.selected || 'home')
 function toBottom() { stick = true; const el = scroller.value; if (el) el.scrollTop = el.scrollHeight }
 const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (Enter)')
 </script>
 <template>
   <section class="chat" :class="{ dragging, fresh }" @dragenter="dragEnter" @dragover="dragOver" @dragleave="dragLeave" @drop="drop">
     <header class="chat-head">
-      <button class="btn ghost icon-only bar-toggle" :class="{ show: sidebarCollapsed }" data-tip="展开侧边栏" aria-label="展开侧边栏" :aria-expanded="state.drawer" @click="toggleSidebar"><Icon name="panel-open" /></button>
+      <button class="btn ghost icon-only bar-toggle chat-back" data-tip="返回会话列表" aria-label="返回会话列表" @click="backToMobileList"><Icon name="back" /></button>
       <template v-if="state.selected">
         <div class="chat-title">
           <SessionAvatar :session="selectedSession" :name="selectedSession?.name || state.selected" :size="22" />
@@ -278,7 +278,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
 
     <div ref="scroller" class="messages" @scroll.passive="onScroll">
       <Transition name="conv" mode="out-in" @enter="toBottom">
-      <div :key="viewKey" class="messages-inner" :class="{ 'is-loading': viewKey.endsWith(':loading') }">
+      <div :key="viewKey" class="messages-inner" :class="{ 'is-loading': !!(state.selected && state.historyLoading && !items.length) }">
         <div v-if="!state.selected" class="welcome">
           <div class="welcome-mark"><Icon name="sparkles" :size="26" :stroke="1.5" /></div>
           <h1 class="display">{{ greeting }}<template v-if="who">，{{ who }}</template></h1>

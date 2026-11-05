@@ -67,6 +67,82 @@ export function requestDelete(key: string) {
   state.deleteRequest++
 }
 
+/* ---------- mobile IM panes (list ↔ chat) ---------- */
+const MOBILE_MQ = '(max-width: 767px)'
+export function isMobileUi() {
+  return typeof matchMedia !== 'undefined' && matchMedia(MOBILE_MQ).matches
+}
+/** On a phone, the session list and the chat are separate screens (WeChat/Telegram-style). */
+export const mobileList = ref(true)
+function ensureMobileListBase() {
+  if (!isMobileUi()) return
+  try {
+    if ((history.state as { relayMobile?: string } | null)?.relayMobile) return
+    history.replaceState({ relayMobile: 'list' }, '', location.pathname + location.search + (location.hash || ''))
+  } catch { /* ignore */ }
+}
+export function enterMobileChat(key: string) {
+  if (!key) return
+  mobileList.value = false
+  state.drawer = false
+  if (!isMobileUi()) return
+  const st = history.state as { relayMobile?: string; key?: string } | null
+  try {
+    if (st?.relayMobile === 'chat') history.replaceState({ relayMobile: 'chat', key }, '', `#s=${encodeURIComponent(key)}`)
+    else history.pushState({ relayMobile: 'chat', key }, '', `#s=${encodeURIComponent(key)}`)
+  } catch { setHashSession(key) }
+}
+/** Hardware/browser back and the in-chat back button land on the session list, not off the PWA. */
+export function backToMobileList() {
+  if (!isMobileUi()) { mobileList.value = true; return }
+  const st = history.state as { relayMobile?: string } | null
+  if (st?.relayMobile === 'chat' || st?.relayMobile === 'page') {
+    history.back()
+    return
+  }
+  mobileList.value = true
+  setHashSession('')
+}
+export function openMobilePage(tab: Tab) {
+  state.tab = tab
+  state.drawer = false
+  if (!isMobileUi()) return
+  mobileList.value = false
+  try { history.pushState({ relayMobile: 'page', tab }, '', location.pathname + location.search) } catch { /* ignore */ }
+}
+function onMobilePopState(e: PopStateEvent) {
+  if (!state.authed || !isMobileUi()) return
+  const st = e.state as { relayMobile?: string; key?: string } | null
+  if (st?.relayMobile === 'chat' && st.key) {
+    mobileList.value = false
+    if (state.selected !== st.key) void selectSession(st.key, { fromPop: true })
+    else if (!state.historyLoading && !state.history.length) void refreshHistory(st.key).catch(() => {})
+  } else if (st?.relayMobile === 'page') {
+    mobileList.value = false
+  } else {
+    mobileList.value = true
+    setHashSession('')
+  }
+}
+let mobileNavBound = false
+function startMobileNav() {
+  if (mobileNavBound || typeof window === 'undefined') return
+  mobileNavBound = true
+  window.addEventListener('popstate', onMobilePopState)
+  try {
+    matchMedia(MOBILE_MQ).addEventListener('change', ev => {
+      if (!ev.matches) return
+      const st = history.state as { relayMobile?: string } | null
+      mobileList.value = !(st?.relayMobile === 'chat' || st?.relayMobile === 'page')
+    })
+  } catch { /* older browsers */ }
+}
+function stopMobileNav() {
+  if (!mobileNavBound || typeof window === 'undefined') return
+  mobileNavBound = false
+  window.removeEventListener('popstate', onMobilePopState)
+}
+
 /* ---------- toast ---------- */
 export const toastState = reactive({ text: '', ok: false, visible: false, id: 0 })
 let toastTimer: number | undefined
@@ -152,9 +228,12 @@ export async function login(value: string, remember: boolean) {
   epoch++
   await refreshSessions().catch(e => { state.sessionsError = e.message })
   startPolling()
+  startMobileNav()
+  ensureMobileListBase()
   // Reopen the session from the URL (#s=key) so a refresh lands back on the running turn.
   const linked = hashSession()
   if (linked && !state.selected && state.sessions.some(s => s.key === linked)) void selectSession(linked)
+  else if (isMobileUi()) mobileList.value = true
 }
 function hashSession() { try { return new URLSearchParams(location.hash.slice(1)).get('s') || '' } catch { return '' } }
 function setHashSession(key: string) {
@@ -178,6 +257,8 @@ export function logout(revoke = true) {
   users.list = []; users.loaded = false
   epoch++
   stopPolling()
+  stopMobileNav()
+  historyAbort?.abort(); historyAbort = null; historyLoadGen++
   for (const key of [...state.attachments.keys()]) discardAttachments(key)
   for (const job of state.pending.values()) for (const f of job.attachments) if (f.preview) URL.revokeObjectURL(f.preview)
   revokeBlobs()
@@ -185,7 +266,8 @@ export function logout(revoke = true) {
   stopStream()
   if (state.selected) setHashSession('')
   historyCache.clear()
-  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null, queue: [], sendMode: 'queue', stopping: false, prompts: [], hasMore: false, loadingOlder: false })
+  mobileList.value = true
+  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', historyLoading: false, drawer: false, live: null, lightbox: null, queue: [], sendMode: 'queue', stopping: false, prompts: [], hasMore: false, loadingOlder: false })
   state.drafts.clear(); state.pending.clear()
   historySig = ''
 }
@@ -249,11 +331,15 @@ function putHistoryCache(key: string, value: { history: HistoryEntry[]; running:
 /** has_more of the last older page fetched for the selected session (null: only the newest page is loaded). */
 let olderMore: boolean | null = null
 const timeOf = (entry?: HistoryEntry) => { const t = Date.parse(entry?.time || ''); return Number.isFinite(t) ? t : -Infinity }
-export async function selectSession(key: string) {
+let historyLoadGen = 0
+let historyAbort: AbortController | null = null
+const HISTORY_LOAD_MS = 12000
+export async function selectSession(key: string, opts: { fromPop?: boolean } = {}) {
+  if (!key) return
   if (state.selected !== key) {
     const cached = historyCache.get(key)
     state.selected = key
-    setHashSession(key)
+    if (!opts.fromPop) setHashSession(key)
     state.history = cached?.history || []
     state.threadRunning = cached?.running || false
     state.hasMore = cached?.hasMore || false
@@ -270,9 +356,31 @@ export async function selectSession(key: string) {
     startStream(key)
   }
   state.drawer = false
+  if (!opts.fromPop) enterMobileChat(key)
+  else { mobileList.value = false; state.drawer = false }
+
+  // Only the latest selectSession may clear historyLoading — rapid switches used to orphan the flag
+  // (or leave the out-in transition on a forever skeleton) when an older fetch resolved out of order.
+  const gen = ++historyLoadGen
+  historyAbort?.abort()
+  const abort = new AbortController()
+  historyAbort = abort
   state.historyLoading = true
-  await refreshHistory(key).catch(e => { state.historyError = e.message })
-  if (state.selected === key) state.historyLoading = false
+  const timer = window.setTimeout(() => { if (gen === historyLoadGen) abort.abort() }, HISTORY_LOAD_MS)
+  try {
+    await refreshHistory(key, abort.signal)
+  } catch (e) {
+    if (gen !== historyLoadGen || state.selected !== key) return
+    const err = e as Error
+    if (err.name === 'AbortError') {
+      if (!state.history.length) state.historyError = '加载超时，请重试'
+    } else {
+      state.historyError = err.message || '加载失败'
+    }
+  } finally {
+    clearTimeout(timer)
+    if (gen === historyLoadGen && state.selected === key) state.historyLoading = false
+  }
 }
 /** A draft session does not exist on the server yet; non-admins get 404 for it until the first send. */
 function draftMissing(key: string, error: unknown) {
@@ -280,11 +388,15 @@ function draftMissing(key: string, error: unknown) {
 }
 
 let historySig = ''
-export async function refreshHistory(key: string) {
+export async function refreshHistory(key: string, signal?: AbortSignal) {
   const own = epoch
   let data: HistoryResponse
-  try { data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=${HISTORY_PAGE}`) }
-  catch (error) { if (draftMissing(key, error)) { data = { key, session: key, history: [], source: 'local', running: false } } else throw error }
+  try { data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=${HISTORY_PAGE}`, signal ? { signal } : {}) }
+  catch (error) {
+    if (signal?.aborted || (error as Error).name === 'AbortError') throw error
+    if (draftMissing(key, error)) { data = { key, session: key, history: [], source: 'local', running: false } } else throw error
+  }
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   if (state.selected !== key || own !== epoch) return
   state.historyError = ''
   state.historySource = data.source

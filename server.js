@@ -353,7 +353,11 @@ async function sessionHistory(key, limit, principal, before = null) {
   const id = sessions[key]?.codex_session_id;
   if (appserver?.connected && id) {
     try {
-      const cache = await appserver.readThread(id);
+      // Hard cap so a wedged thread/resume cannot leave the console on a forever skeleton.
+      const cache = await Promise.race([
+        appserver.readThread(id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('thread history timeout')), 8000)),
+      ]);
       try {
         const thread = { ...cache.thread, id };
         const active = appserver.runningTurn(cache.thread);
