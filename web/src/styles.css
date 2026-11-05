@@ -282,7 +282,7 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 .src-pill { color: var(--muted); border: 1px solid var(--line); }
 .stop-btn { color: var(--red); border-color: color-mix(in srgb, var(--red) 35%, transparent); background: var(--surface); }
 .stop-btn:hover:not(:disabled) { background: var(--red-soft); }
-.messages { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 24px; }
+.messages { flex: 1; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 24px; }
 .messages-inner { max-width: calc(var(--col) + 48px); margin: 0 auto; padding: 12px 24px 32px; display: flex; flex-direction: column; gap: 26px; }
 
 /* messages */
@@ -294,10 +294,12 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 @keyframes spark { 50% { transform: rotate(18deg) scale(1.08); opacity: .75; } }
 .msg-main { flex: 1; min-width: 0; }
 .msg.user { justify-content: flex-end; }
-.msg.user .msg-main { flex: 0 1 auto; max-width: min(85%, 600px); display: flex; flex-direction: column; align-items: flex-end; }
-.msg.user .msg-body { padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--bubble); color: var(--ink); }
-.msg.user .attachments { justify-content: flex-end; }
-.msg.assistant .msg-body { font-size: 15px; line-height: 1.75; }
+.msg.user .msg-main { flex: 0 1 auto; width: fit-content; max-width: min(85%, 600px); min-width: 0; display: flex; flex-direction: column; align-items: flex-end; }
+.msg.user .msg-body { padding: 10px 16px; border-radius: 18px 18px 6px 18px; background: var(--bubble); color: var(--ink); max-width: 100%; min-width: 0; overflow-x: auto; overflow-wrap: anywhere; word-break: break-word; }
+.msg.user .msg-body > p { margin: 0; }
+.msg.user .attachments { justify-content: flex-end; max-width: 100%; }
+.msg.assistant .msg-main { min-width: 0; max-width: 100%; }
+.msg.assistant .msg-body { font-size: 15px; line-height: 1.75; max-width: 100%; min-width: 0; overflow-x: auto; }
 .msg.error .msg-body { color: var(--red); }
 .msg-meta { display: flex; align-items: center; gap: 8px; min-height: 26px; margin-top: 4px; font-size: 11.5px; color: var(--faint); opacity: 0; transition: opacity .15s; }
 .msg:hover .msg-meta, .msg:focus-within .msg-meta, .msg.error .msg-meta { opacity: 1; }
@@ -316,7 +318,7 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 .sk-msg.right { justify-items: end; }
 
 /* markdown */
-.md { overflow-wrap: anywhere; color: var(--ink); }
+.md { overflow-wrap: anywhere; word-break: break-word; max-width: 100%; min-width: 0; color: var(--ink); }
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 12px; }
 .md ul, .md ol { margin: 0 0 12px; padding-left: 24px; }
@@ -332,9 +334,17 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 .md strong { font-weight: 600; }
 .md code { font-family: var(--mono); font-size: .86em; background: var(--bg-muted); border-radius: 5px; padding: 1.5px 5px; }
 .msg.user .md code { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.msg.user .md h1, .msg.user .md h2, .msg.user .md h3, .msg.user .md h4, .msg.user .md h5, .msg.user .md h6 { margin: 10px 0 6px; font-size: 14.5px; font-family: var(--sans); font-weight: 600; line-height: 1.45; }
+.msg.user .md h1 { font-size: 15.5px; }
+.msg.user .md p { margin: 0 0 8px; }
+.msg.user .md ul, .msg.user .md ol { margin: 0 0 8px; padding-left: 20px; }
+.msg.user .md hr { margin: 10px 0; }
+.msg.user .md .code-block, .msg.user .md .table-wrap { max-width: 100%; }
+.msg.user .md img.md-img { max-width: min(100%, 280px); max-height: 220px; }
 .md .code-block { position: relative; margin: 0 0 14px; }
-.md pre { margin: 0; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: auto; font-size: 13px; line-height: 1.6; }
+.md pre { margin: 0; padding: 14px 16px; max-width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: auto; font-size: 13px; line-height: 1.6; }
 .md pre code { border: 0; padding: 0; background: none; font-size: inherit; white-space: pre; overflow-wrap: normal; }
+.msg.user .md pre code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .code-copy { position: absolute; top: 8px; right: 8px; height: 24px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 11.5px; cursor: pointer; opacity: 0; transition: opacity .15s, color .15s; }
 .code-block:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
 .code-copy:hover { color: var(--ink); }

@@ -41,6 +41,10 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
 export function isImageSrc(src: string): boolean { return /^(?:https:\/\/|\/api\/media\/|data:image\/(?:png|jpeg|gif|webp);base64,)/i.test(src) }
 
 const escapeText = (text: string) => `<p style="white-space:pre-wrap">${escHtml(text)}</p>`
+/** Plain escaped text for user bubbles: keeps the raw Markdown the agent saw, without block layout blowups. */
+export function renderPlain(text: string): string {
+  return escapeText(String(text ?? ''))
+}
 const cache = new Map<string, string>()
 
 // `live` text changes on every delta: skip the cache so it does not fill with partial strings.

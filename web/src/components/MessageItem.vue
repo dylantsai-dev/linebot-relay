@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { HistoryEntry } from '../lib/types'
-import { renderMarkdown } from '../lib/markdown'
+import { renderMarkdown, renderPlain } from '../lib/markdown'
 import { time, workedFor } from '../lib/format'
 import { copy } from '../lib/clipboard'
 import { state } from '../store'
@@ -15,7 +15,11 @@ const worked = computed(() => (props.entry.role === 'assistant' && props.entry.d
 const open = ref(true)
 const copied = ref(false)
 async function copyText() { await copy(props.entry.text); copied.value = true; setTimeout(() => (copied.value = false), 1400) }
-const html = computed(() => renderMarkdown(props.entry.text))
+const html = computed(() => {
+  // User (and error) bubbles stay plain: pasted Markdown docs were blowing past the bubble via headings/pre/tables.
+  if (props.entry.role === 'user' || props.entry.role === 'error') return renderPlain(props.entry.text)
+  return renderMarkdown(props.entry.text)
+})
 
 // Copy buttons for fenced code blocks, via delegation (no per-render DOM work).
 function onClick(e: MouseEvent) {
@@ -31,7 +35,10 @@ function onClick(e: MouseEvent) {
   const pre = btn.parentElement?.querySelector('pre')
   if (pre) void copy(pre.innerText)
 }
-const withCopy = computed(() => html.value.replaceAll('<div class="code-block">', '<div class="code-block"><button type="button" class="code-copy" aria-label="复制代码">复制</button>'))
+const withCopy = computed(() => {
+  if (props.entry.role === 'user' || props.entry.role === 'error') return html.value
+  return html.value.replaceAll('<div class="code-block">', '<div class="code-block"><button type="button" class="code-copy" aria-label="复制代码">复制</button>')
+})
 </script>
 <template>
   <article class="msg" :class="[entry.role, { optimistic }]">
@@ -43,7 +50,7 @@ const withCopy = computed(() => html.value.replaceAll('<div class="code-block">'
         <div class="turn-rule" />
         <div class="turn-steps" :class="{ open: open && steps.length }"><div><TurnSteps v-if="steps.length" :steps="steps" /></div></div>
       </template>
-      <div v-if="entry.text" class="msg-body md" @click="onClick" v-html="withCopy" />
+      <div v-if="entry.text" class="msg-body" :class="{ md: entry.role === 'assistant' }" @click="onClick" v-html="withCopy" />
       <div v-if="entry.images?.length" class="gen-images">
         <button v-for="(img, i) in entry.images" :key="img.url" type="button" class="gen-image" :title="img.prompt || img.name" @click="state.lightbox = { src: img.url, alt: img.prompt || img.name || `图片 ${i + 1}` }">
           <img :src="img.url" :alt="img.prompt || img.name || '图片'" loading="lazy" decoding="async" referrerpolicy="no-referrer">
