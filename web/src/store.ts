@@ -240,7 +240,9 @@ export async function selectSession(key: string) {
     state.prompts = []
     olderMore = cached?.olderMore ?? null
     state.historyError = ''
-    state.live = null
+    // Drop the previous session's live buffer too (and its pending 100 ms commit): otherwise the old turn's
+    // process / answer is painted back into this session, or this session's events append under it.
+    setLive(null)
     state.queue = []
     state.sendMode = 'queue'
     historySig = cached?.sig || ''
@@ -589,8 +591,11 @@ function commitLive() {
     state.live = liveBuf ? { ...liveBuf, items: liveBuf.items.map(item => ({ ...item })) } : null
   }, 100)
 }
-function liveItem(id: string, init: Partial<LiveItem>): LiveItem {
-  if (!liveBuf) liveBuf = { turnId: '', startedAt: new Date().toISOString(), items: [] }
+function liveItem(id: string, init: Partial<LiveItem>, turnId?: string | null): LiveItem {
+  // An event of another turn never appends under the buffered one (that mashed an old turn into the new one).
+  if (liveBuf && turnId && liveBuf.turnId && liveBuf.turnId !== turnId) liveBuf = null
+  if (!liveBuf) liveBuf = { turnId: turnId || '', startedAt: new Date().toISOString(), items: [] }
+  else if (turnId && !liveBuf.turnId) liveBuf.turnId = turnId
   let item = liveBuf.items.find(i => i.id === id)
   if (!item) { item = { id, kind: 'other', ...init } as LiveItem; liveBuf.items.push(item) }
   return item
@@ -627,12 +632,12 @@ function onStreamEvent(key: string, name: string, data: any) {
     if (data.running) state.threadRunning = true
     void refreshSessions().catch(() => {})
   } else if (name === 'item') {
-    const item = liveItem(data.item.id, data.item)
+    const item = liveItem(data.item.id, data.item, data.turnId)
     Object.assign(item, data.item)
     state.threadRunning = true
     commitLive()
   } else if (name === 'delta') {
-    const item = liveItem(data.id, { kind: data.kind, text: '' }) as any
+    const item = liveItem(data.id, { kind: data.kind, text: '' }, data.turnId) as any
     item[data.field] = (item[data.field] || '') + data.delta
     if (data.field === 'output' && item.output.length > 4000) item.output = item.output.slice(-4000)
     commitLive()

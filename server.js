@@ -355,7 +355,7 @@ async function sessionHistory(key, limit, principal, before = null) {
     try {
       const cache = await appserver.readThread(id);
       const thread = { ...cache.thread, id };
-      const active = cache.thread.turns.find(turn => turn.status === 'inProgress');
+      const active = appserver.runningTurn(cache.thread);
       const running = !!active || appserver.threadState(id).status === 'active';
       const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
       const roots = mediaRoots(key, thread);
@@ -438,7 +438,7 @@ async function sessionListing() {
     return { key, codex_session_id: null, messages: 0, created_at: state?.created_at, updated_at: state?.updated_at, ...stored,
       ...(thread ? { messages: turns.filter(t => t.status === 'completed').length,
         updated_at: unixTime(last?.completedAt ?? last?.startedAt ?? thread.updatedAt) || stored?.updated_at } : {}),
-      status: state?.running || watched?.status === 'active' || turns.some(t => t.status === 'inProgress') ? 'running' : state?.queued ? 'queued' : 'idle', queued: state?.queued || 0 };
+      status: state?.running || watched?.status === 'active' || !!appserver?.runningTurn(thread) ? 'running' : state?.queued ? 'queued' : 'idle', queued: state?.queued || 0 };
   }).sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
 }
 
@@ -1097,7 +1097,7 @@ function streamSession(req, res, key, principal) {
   const off = appserver ? appserver.onLive((threadId, data) => {
     if (threadId !== sessions[key]?.codex_session_id) return;
     // Copy now: the live item keeps changing (deltas) before the batch is flushed.
-    if (data.type === 'item') push('item', { item: { ...publicLiveItem(data.item, key, uid, mediaRoots(key, cachedThread(key))) } });
+    if (data.type === 'item') push('item', { item: { ...publicLiveItem(data.item, key, uid, mediaRoots(key, cachedThread(key))) }, turnId: data.turnId || null });
     else if (data.type === 'delta') push('delta', data);
     else if (data.type === 'turn') { push('turn', data); flush(); }
   }) : () => {};
@@ -1110,7 +1110,7 @@ function streamSession(req, res, key, principal) {
   // Joined mid-turn (e.g. relay restarted): seed the live buffer from the thread snapshot.
   const id = sessions[key]?.codex_session_id;
   if (appserver?.connected && id && !appserver.threads.get(id)?.live && appserver.threads.get(id)?.status === 'active') {
-    appserver.readThread(id).then(cache => { const turn = cache.thread.turns.find(t => t.status === 'inProgress'); if (turn && appserver.seedLive(id, turn)) snapshot(); }).catch(() => {});
+    appserver.readThread(id).then(cache => { const turn = appserver.runningTurn(cache.thread); if (turn && appserver.seedLive(id, turn)) snapshot(); }).catch(() => {});
   }
   const heartbeat = setInterval(() => {
     // A revoked login or lost grant ends the stream.
