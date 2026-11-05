@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { state, restoreLogin, sidebarCollapsed, registerSessionEditor, registerWebhookViewer, registerSessionAssigner } from './store'
+import { state, restoreLogin, sidebarCollapsed, mobileList, registerSessionEditor, registerWebhookViewer, registerSessionAssigner } from './store'
 import LoginView from './components/LoginView.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import SessionsView from './components/SessionsView.vue'
@@ -25,7 +25,7 @@ registerSessionAssigner(s => assignDialog.value?.open(s))
 <template>
   <div v-if="state.booting" class="boot"><span class="spinner" /></div>
   <LoginView v-else-if="!state.authed" />
-  <div v-else class="shell" :class="{ collapsed: sidebarCollapsed }">
+  <div v-else class="shell" :class="{ collapsed: sidebarCollapsed, 'mobile-list': mobileList, 'mobile-chat': !mobileList }">
     <Transition name="fade"><div v-if="state.drawer" class="backdrop" @click="state.drawer = false" /></Transition>
     <AppSidebar />
     <main class="main">

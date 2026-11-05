@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// Slim top bar for non-chat pages: sidebar toggle (drawer on mobile, expand when collapsed).
-import { state, sidebarCollapsed, toggleSidebar } from '../store'
+// Slim top bar for non-chat pages: back to the session list on mobile, sidebar toggle on desktop.
+import { backToMobileList } from '../store'
 import Icon from './Icon.vue'
 </script>
 <template>
   <div class="page-bar">
-    <button class="btn ghost icon-only bar-toggle" :class="{ show: sidebarCollapsed }" data-tip="展开侧边栏" aria-label="展开侧边栏" :aria-expanded="state.drawer" @click="toggleSidebar"><Icon name="panel-open" /></button>
+    <button class="btn ghost icon-only bar-toggle chat-back" data-tip="返回会话列表" aria-label="返回会话列表" @click="backToMobileList"><Icon name="back" /></button>
   </div>
 </template>

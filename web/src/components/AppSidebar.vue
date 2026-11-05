@@ -5,7 +5,7 @@ import Icon from './Icon.vue'
 import SessionAvatar from './SessionAvatar.vue'
 import {
   editSession, assignSession, openWebhook, setSessionPaused, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
-  logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink, requestDelete,
+  logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink, requestDelete, openMobilePage, isMobileUi, backToMobileList,
 } from '../store'
 import { canInstall, showIosInstallHint, installPwa } from '../lib/pwa'
 import { shortTime, time } from '../lib/format'
@@ -16,9 +16,15 @@ const nav = computed(() => [
   ['sessions', '会话', 'chat'], ['logs', '日志', 'logs'], ...(isAdmin.value ? [['users', '用户', 'users']] : []), ['docs', '文档', 'docs'],
 ] as [TabId, string, string][])
 function go(tab: TabId) {
-  state.tab = tab; state.drawer = false
   if (tab === 'logs') void refreshLogs()
   if (tab === 'users') void refreshUsers()
+  if (tab === 'sessions') {
+    state.tab = 'sessions'
+    if (isMobileUi()) backToMobileList()
+    else state.drawer = false
+    return
+  }
+  openMobilePage(tab)
 }
 function clearRowActionFocus() {
   const el = document.activeElement as HTMLElement | null
