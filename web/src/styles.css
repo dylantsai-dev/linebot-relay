@@ -689,3 +689,10 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .queue-act:hover { color: var(--ink); background: var(--bg-hover); }
 
 .md a.local-link { color: var(--muted); text-decoration: underline dotted; cursor: help; }
+
+.send { border-radius: 50%; }
+.send.stop { background: var(--ink); color: var(--bg); }
+.send.stop:hover:not(:disabled) { opacity: .85; }
+.stop-square { width: 10px; height: 10px; border-radius: 2.5px; background: currentColor; }
+.s-spin { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 1.5px solid var(--line); border-top-color: var(--muted); animation: spin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .s-spin { animation-duration: 2.4s; } }

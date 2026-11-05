@@ -104,7 +104,7 @@ async function savePassword() {
             <button type="button" class="session" :aria-pressed="state.selected === s.key" :title="`${s.key} · ${s.codex_session_id || '未关联'} · ${time(s.updated_at)}`" @click="open(s.key)">
               <span class="dot" :class="s.status" />
               <span class="s-key">{{ s.key }}</span>
-              <span v-if="statusText(s)" class="s-status">{{ statusText(s) }}</span>
+              <span v-if="s.status === 'running' || s.status === 'queued'" class="s-spin" :title="statusText(s)" />
               <span v-else class="s-time">{{ shortTime(s.updated_at) }}</span>
             </button>
             <div class="row-actions">

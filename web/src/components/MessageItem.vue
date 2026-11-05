@@ -16,7 +16,6 @@ const open = ref(true)
 const copied = ref(false)
 async function copyText() { await copy(props.entry.text); copied.value = true; setTimeout(() => (copied.value = false), 1400) }
 const html = computed(() => renderMarkdown(props.entry.text))
-const source = computed(() => (props.entry.role !== 'user' ? '' : props.entry.source === 'app' ? 'App' : props.entry.source || ''))
 
 // Copy buttons for fenced code blocks, via delegation (no per-render DOM work).
 function onClick(e: MouseEvent) {
@@ -53,7 +52,7 @@ const withCopy = computed(() => html.value.replaceAll('<div class="code-block">'
       <AttachmentList v-if="entry.attachments?.length" :files="entry.attachments" />
       <div class="msg-actions">
         <button v-if="entry.role !== 'error' && entry.text" type="button" class="act-btn" :data-tip="copied ? '已复制' : '复制'" aria-label="复制消息" @click="copyText"><Icon :name="copied ? 'check' : 'copy'" :size="14" :stroke="1.6" /></button>
-        <span class="act-meta">{{ optimistic ? '发送中…' : [source && entry.role === 'user' ? source : '', entry.time ? time(entry.time).slice(11, 16) : ''].filter(Boolean).join(' · ') }}</span>
+        <span class="act-meta">{{ optimistic ? '发送中…' : entry.time ? time(entry.time).slice(11, 16) : '' }}</span>
       </div>
     </div>
   </article>

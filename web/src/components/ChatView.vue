@@ -95,7 +95,7 @@ function onPaste(e: ClipboardEvent) {
 // Admins withdraw anything; users only their own queued messages (the server enforces the same rule).
 const canWithdraw = (q: { user: string | null }) => isAdmin.value || (!!q.user && q.user === state.me?.user?.username)
 const queueTitle = (e: { mode: string; fallback?: string; user: string | null; source: string }) =>
-  [e.fallback === 'steer_rejected' ? '引导被拒绝，已改为队首排队' : e.mode === 'steer' ? '引导' : '排队', e.user ? `来自 ${e.user}` : e.source].join(' · ')
+  [e.fallback === 'steer_rejected' ? '引导被拒绝，已改为队首排队' : e.mode === 'steer' ? '引导' : '排队', e.user ? `来自 ${e.user}` : ''].filter(Boolean).join(' · ')
 function onPick() { if (fileInput.value?.files) addFiles(fileInput.value.files); if (fileInput.value) fileInput.value.value = '' }
 const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types || [])].includes('Files')
 function dragEnter(e: DragEvent) { if (!hasFiles(e) || !state.selected) return; e.preventDefault(); dragDepth++; dragging.value = true }
@@ -110,6 +110,8 @@ const who = computed(() => state.me?.user?.username || '')
 const menuAnchor = ref<HTMLElement | null>(null)
 function toggleCopyMenu(e: MouseEvent) { const el = e.currentTarget as HTMLElement; menuAnchor.value = menuAnchor.value === el ? null : el }
 function closeCopyMenu(focus: boolean) { const a = menuAnchor.value; menuAnchor.value = null; if (focus) a?.focus({ preventScroll: true }) }
+// Codex-style: while a turn runs and nothing is typed, the send button becomes the stop button.
+const canStop = computed(() => busy.value && !selectedSession.value?.draft && !pending.value && !text.value.trim() && !drafts.value.length)
 const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (Enter)')
 </script>
 <template>
@@ -123,10 +125,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <span v-else class="id-pill mono muted">{{ selectedSession?.draft ? '首条消息后创建' : '未绑定' }}</span>
         </div>
         <span class="spacer" />
-        <Transition name="fade"><span v-if="running" class="status-pill" :class="{ live: state.streaming }" :data-tip="state.streaming ? '通过 SSE 实时推送' : '正在运行'"><span class="dot running" />运行中</span></Transition>
-        <span v-if="queued.length" class="src-pill" data-tip="当前回合结束后依次发送"><Icon name="clock" :size="12" />排队 {{ queued.length }}</span>
         <span v-if="state.historySource === 'local'" class="src-pill" data-tip="Codex App 未连接，显示中继本地记录">本地记录</span>
-        <button v-if="busy && !selectedSession?.draft" class="btn sm stop-btn" data-tip="停止当前回合（turn/interrupt）" :disabled="state.stopping" @click="stopTurn"><span v-if="state.stopping" class="spinner sm" /><Icon v-else name="stop" :size="12" :stroke="2.4" />{{ state.stopping ? '停止中…' : '停止' }}</button>
         <button class="btn ghost icon-only" data-tip="复制 Webhook / curl" aria-label="复制 Webhook" aria-haspopup="menu" :aria-expanded="!!menuAnchor" @click="toggleCopyMenu"><Icon name="webhook" /></button>
         <button v-if="canCreate" class="btn ghost icon-only danger-hover" data-tip="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
       </template>
@@ -161,7 +160,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           </div>
           <MessageItem v-for="item in items" :key="item.key" :entry="item.entry" />
           <div v-for="f in inflight" :key="'q-' + f.id" class="inflight" :class="{ steered: f.steered }">
-            <MessageItem :entry="f.entry" optimistic />
+            <MessageItem :entry="f.entry" :optimistic="!f.steered" />
             <span v-if="f.steered" class="inflight-tag"><Icon name="steer" :size="11" />已引导到当前回合</span>
           </div>
           <MessageItem v-if="optimistic" key="__optimistic" :entry="optimistic" optimistic />
@@ -198,7 +197,8 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <button type="button" class="tool-btn" :data-tip="`添加附件 · 任意类型，最多 ${limits.files} 个，每个 ≤ ${fileSize(limits.fileBytes)}`" aria-label="添加附件" :disabled="drafts.length >= limits.files" @click="fileInput?.click()"><Icon name="plus" :size="17" /></button>
           <span v-if="drafts.length" class="tool-count">{{ drafts.length }}/{{ limits.files }}</span>
           <span class="spacer" />
-          <button class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else name="send" :size="16" :stroke="2.2" /></button>
+          <button v-if="canStop" type="button" class="send stop" :data-tip="state.stopping ? '正在停止…' : '停止当前回合'" aria-label="停止当前回合" :disabled="state.stopping" @click="stopTurn"><span v-if="state.stopping" class="spinner sm" /><span v-else class="stop-square" /></button>
+          <button v-else class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else name="send" :size="16" :stroke="2.2" /></button>
         </div>
       </div>
       <div class="hint"><span><kbd class="kbd">Enter</kbd> {{ busy ? '排队' : '发送' }} · <kbd class="kbd">Shift</kbd>+<kbd class="kbd">Enter</kbd> 换行</span><span class="hint-files">可粘贴或拖入任意文件 · 单个 ≤ {{ fileSize(limits.fileBytes) }}</span></div>
