@@ -121,6 +121,10 @@ function toggleCopyMenu(e: MouseEvent) { const el = e.currentTarget as HTMLEleme
 function closeCopyMenu(focus: boolean) { const a = menuAnchor.value; menuAnchor.value = null; if (focus) a?.focus({ preventScroll: true }) }
 // Codex-style: while a turn runs and nothing is typed, the send button becomes the stop button.
 const canStop = computed(() => (busy.value || !!pending.value) && !selectedSession.value?.draft && !text.value.trim() && !drafts.value.length)
+// Switching sessions cross-fades the conversation: the old one fades out quickly, the new one (from cache when
+// visited before, otherwise skeleton then content) fades in with a small rise, already scrolled to the bottom.
+const viewKey = computed(() => !state.selected ? 'home' : `${state.selected}:${items.value.length || !state.historyLoading ? 'ready' : 'loading'}`)
+function toBottom() { stick = true; const el = scroller.value; if (el) el.scrollTop = el.scrollHeight }
 const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (Enter)')
 </script>
 <template>
@@ -143,7 +147,8 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
     <CopyMenu :anchor="menuAnchor" :session-key="state.selected" @close="closeCopyMenu" />
 
     <div ref="scroller" class="messages">
-      <div class="messages-inner">
+      <Transition name="conv" mode="out-in" @enter="toBottom">
+      <div :key="viewKey" class="messages-inner" :class="{ 'is-loading': viewKey.endsWith(':loading') }">
         <div v-if="!state.selected" class="welcome">
           <div class="welcome-mark"><Icon name="sparkles" :size="26" :stroke="1.5" /></div>
           <h1 class="display">{{ greeting }}<template v-if="who">，{{ who }}</template></h1>
@@ -176,6 +181,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="liveElapsed" />
         </template>
       </div>
+      </Transition>
     </div>
 
     <form v-if="state.selected" class="composer" @submit.prevent="submit" @paste="onPaste">

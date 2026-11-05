@@ -146,6 +146,7 @@ export function logout(revoke = true) {
   clearTokens()
   stopStream()
   if (state.selected) setHashSession('')
+  historyCache.clear()
   Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null, queue: [], sendMode: 'queue', stopping: false })
   state.drafts.clear(); state.pending.clear()
   historySig = ''
@@ -176,17 +177,20 @@ export async function refreshSessions() {
   if (sig !== sessionsSig) { sessionsSig = sig; state.sessions = data.sessions }
 }
 
+// Last history seen per session, so switching back shows it at once (then refreshes) instead of a skeleton.
+const historyCache = new Map<string, { history: HistoryEntry[]; running: boolean; sig: string }>()
 export async function selectSession(key: string) {
   if (state.selected !== key) {
+    const cached = historyCache.get(key)
     state.selected = key
     setHashSession(key)
-    state.history = []
-    state.threadRunning = false
+    state.history = cached?.history || []
+    state.threadRunning = cached?.running || false
     state.historyError = ''
     state.live = null
     state.queue = []
     state.sendMode = 'queue'
-    historySig = ''
+    historySig = cached?.sig || ''
     startStream(key)
   }
   state.drawer = false
@@ -218,6 +222,7 @@ export async function refreshHistory(key: string) {
   historySig = sig
   state.history = data.history
   state.threadRunning = !!data.running
+  historyCache.set(key, { history: data.history, running: !!data.running, sig })
 }
 
 /* ---------- Codex threads: the sidebar links existing Codex sessions ---------- */

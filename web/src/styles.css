@@ -697,3 +697,11 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .stop-square { position: absolute; inset: 0; margin: auto; width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
 .s-spin { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 1.5px solid var(--line); border-top-color: var(--muted); animation: spin .9s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .s-spin { animation-duration: 2.4s; } }
+
+/* Session switch: quick fade out, soft fade-up in. */
+.conv-leave-active { transition: opacity .1s var(--ease); }
+.conv-enter-active { transition: opacity .28s var(--ease), transform .32s var(--ease); }
+.conv-leave-to { opacity: 0; }
+.conv-enter-from { opacity: 0; transform: translateY(8px); }
+@media (prefers-reduced-motion: reduce) { .conv-enter-active { transition: opacity .15s linear; } .conv-enter-from { transform: none; } }
+.conv-leave-active.is-loading { transition: none; } /* skeleton gives way to content without a blank beat */
