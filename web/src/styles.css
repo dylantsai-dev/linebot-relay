@@ -687,3 +687,5 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
   color: var(--muted); font-size: 12.5px; cursor: pointer; flex: none; transition: color .15s, background-color .15s; }
 .queue-act.icon { width: 28px; padding: 0; justify-content: center; }
 .queue-act:hover { color: var(--ink); background: var(--bg-hover); }
+
+.md a.local-link { color: var(--muted); text-decoration: underline dotted; cursor: help; }

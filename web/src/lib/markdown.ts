@@ -25,6 +25,11 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
     el.classList.add('md-img')
   }
   if (el.tagName === 'A' && /^data:/i.test(el.getAttribute('href') || '')) el.removeAttribute('href')
+  // A local path the server could not turn into a signed link (outside the session's folders) is not clickable.
+  if (el.tagName === 'A' && /^(file:|\/(?!api\/media\/))/i.test(el.getAttribute('href') || '')) {
+    el.setAttribute('title', `服务器本地文件，网页无法打开：${el.getAttribute('href')}`)
+    el.removeAttribute('href'); el.removeAttribute('target'); el.classList.add('local-link')
+  }
   if (el.tagName === 'INPUT') { if (el.getAttribute('type') !== 'checkbox') { el.remove(); return } el.setAttribute('disabled', '') }
   if (el.hasAttribute?.('align')) {
     const a = el.getAttribute('align') || ''

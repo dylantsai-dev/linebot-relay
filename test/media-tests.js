@@ -46,9 +46,31 @@ try {
     res.writeHead = (status, h) => { headers.status = status; Object.assign(headers, h); };
     await new Promise(resolve => { res.on('finish', resolve); media.serve({ method: 'GET' }, res, fs.realpathSync(path.join(root, 'notes.txt')), true); });
     assert.equal(headers.status, 200);
-    assert.equal(headers['Content-Type'], 'application/octet-stream');
-    assert.match(headers['Content-Disposition'], /^attachment;/);
+    assert.equal(headers['Content-Type'], 'text/plain; charset=utf-8', 'plain text displays inline');
+    assert.match(headers['Content-Disposition'], /^inline;/);
+    assert.equal(headers['X-Content-Type-Options'], 'nosniff');
     assert.equal(body, 'txt');
+  }
+  {
+    // Linked HTML (e.g. a report Codex wrote) opens inline only inside a CSP sandbox; unknown types download.
+    fs.writeFileSync(path.join(root, 'report.html'), '<h1>x</h1>'); fs.writeFileSync(path.join(root, 'data.bin'), 'b');
+    const serve = async name => {
+      const headers = {};
+      const res = new (require('node:stream').Writable)({ write(_c, _e, cb) { cb(); } });
+      res.writeHead = (status, h) => { headers.status = status; Object.assign(headers, h); };
+      await new Promise(resolve => { res.on('finish', resolve); media.serve({ method: 'GET' }, res, fs.realpathSync(path.join(root, name)), true); });
+      return headers;
+    };
+    const html = await serve('report.html');
+    assert.equal(html['Content-Type'], 'text/html; charset=utf-8');
+    assert.match(html['Content-Security-Policy'], /^sandbox /);
+    assert.doesNotMatch(html['Content-Security-Policy'], /allow-same-origin/);
+    const bin = await serve('data.bin');
+    assert.equal(bin['Content-Type'], 'application/octet-stream');
+    assert.match(bin['Content-Disposition'], /^attachment;/);
+    assert.match(media.linkUrl(path.join(root, 'report.html'), [root], 'k', 7), /^\/api\/media\/report\.html\?.*&t=f&/);
+    assert.equal(media.linkUrl('/etc/hostname', [root], 'k', 7), null, 'outside the roots');
+    assert.equal(media.linkUrl(path.join(root, 'report.html'), ['/'], 'k', 7), null, 'shallow root');
   }
 
   const toUrl = raw => raw.startsWith(root) ? `/api/media/x?p=${encodeURIComponent(raw)}` : null;

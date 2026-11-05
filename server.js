@@ -264,7 +264,7 @@ function decorateEntry(entry, key, principal, roots) {
   const toUrl = raw => media.url(raw, roots, key, uid);
   let next = entry;
   if (entry.role === 'assistant' && entry.text) {
-    const { text, used } = rewriteMarkdown(entry.text, toUrl);
+    const { text, used } = rewriteMarkdown(entry.text, toUrl, raw => media.linkUrl(raw, roots, key, uid));
     if (text !== entry.text) next = { ...next, text };
     if (entry.images) next = { ...next, images: entry.images.filter(image => !image.path || !used.includes(path.normalize(image.path))) };
   }

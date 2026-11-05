@@ -580,7 +580,7 @@ async function main() {
   const download = await rawGet(fileEntry.url);
   assert.equal(download.status, 200);
   assert.equal(download.body, 'inline text');
-  assert.match(download.headers['Content-Disposition'], /^attachment;.*notes\.txt/);
+  assert.match(download.headers['Content-Disposition'], /^inline;.*notes\.txt/);
   assert.equal((await rawGet(fileEntry.url.replace('&t=f', ''))).status, 404, 'download signature cannot serve as an image signature');
 
   // Failure before any turn is sent may use exec, including backoff calls.
