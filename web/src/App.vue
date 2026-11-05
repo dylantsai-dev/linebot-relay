@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { state, restoreLogin, sidebarCollapsed } from './store'
+import { onMounted, ref } from 'vue'
+import { state, restoreLogin, sidebarCollapsed, registerSessionEditor } from './store'
 import LoginView from './components/LoginView.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import SessionsView from './components/SessionsView.vue'
@@ -11,7 +11,10 @@ import Lightbox from './components/Lightbox.vue'
 import UsersView from './components/UsersView.vue'
 import SetupBanner from './components/SetupBanner.vue'
 import PageBar from './components/PageBar.vue'
+import SessionDialog from './components/SessionDialog.vue'
 onMounted(restoreLogin)
+const sessionDialog = ref<InstanceType<typeof SessionDialog>>()
+registerSessionEditor(s => sessionDialog.value?.open(s))
 </script>
 <template>
   <div v-if="state.booting" class="boot"><span class="spinner" /></div>
@@ -30,6 +33,7 @@ onMounted(restoreLogin)
       </div>
     </main>
   </div>
+  <SessionDialog ref="sessionDialog" />
   <ToastBar />
   <Lightbox />
 </template>

@@ -32,7 +32,7 @@ async function submit() {
     <form class="login-card" @submit.prevent="submit">
       <BrandMark class="login-mark" :size="44" />
       <h1 class="display">欢迎回来</h1>
-      <p class="login-sub">{{ mode === 'password' ? '登录 Codex Relay 控制台' : '使用访问令牌（WEBHOOK_TOKEN）登录' }}</p>
+      <p class="login-sub">{{ mode === 'password' ? '登录 ディランボット 三代目' : '使用访问令牌（WEBHOOK_TOKEN）登录' }}</p>
       <div class="segmented login-tabs" role="tablist" aria-label="登录方式">
         <button type="button" role="tab" :aria-selected="mode === 'password'" :class="{ on: mode === 'password' }" @click="switchMode('password')"><Icon name="user" :size="14" />账号密码</button>
         <button type="button" role="tab" :aria-selected="mode === 'token'" :class="{ on: mode === 'token' }" @click="switchMode('token')"><Icon name="key" :size="14" />访问令牌</button>
@@ -54,6 +54,6 @@ async function submit() {
       </button>
       <p class="login-error" role="alert">{{ error }}</p>
     </form>
-    <p class="login-foot"><Icon name="webhook" :size="13" />Webhook → Codex App 会话中继</p>
+    <p class="login-foot"><Icon name="webhook" :size="13" />Webhook → ディランボット 三代目</p>
   </div>
 </template>

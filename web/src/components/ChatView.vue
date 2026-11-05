@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession } from '../store'
+import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
 import { fileSize } from '../lib/format'
@@ -133,13 +134,15 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
       <button class="btn ghost icon-only bar-toggle" :class="{ show: sidebarCollapsed }" data-tip="展开侧边栏" aria-label="展开侧边栏" :aria-expanded="state.drawer" @click="toggleSidebar"><Icon name="panel-open" /></button>
       <template v-if="state.selected">
         <div class="chat-title">
-          <span class="title-key" :title="state.selected">{{ state.selected }}</span>
-          <button v-if="selectedSession?.codex_session_id" class="id-pill mono" data-tip="复制 Codex 会话 ID" @click="copy(selectedSession.codex_session_id!)"><span>{{ selectedSession.codex_session_id }}</span><Icon name="copy" :size="11" /></button>
+          <SessionAvatar :session="selectedSession" :name="selectedSession?.name || state.selected" :size="22" />
+          <span class="title-key" :title="state.selected">{{ selectedSession?.name || state.selected }}</span>
+          <button v-if="selectedSession?.codex_session_id" class="id-pill mono" data-tip="复制会话 ID" @click="copy(selectedSession.codex_session_id!)"><span>{{ selectedSession.codex_session_id }}</span><Icon name="copy" :size="11" /></button>
           <span v-else class="id-pill mono muted">{{ selectedSession?.draft ? '首条消息后创建' : '未绑定' }}</span>
         </div>
         <span class="spacer" />
-        <span v-if="state.historySource === 'local'" class="src-pill" data-tip="Codex App 未连接，显示中继本地记录">本地记录</span>
+        <span v-if="state.historySource === 'local'" class="src-pill" data-tip="ディランボット 三代目 未连接，显示本地记录">本地记录</span>
         <button class="btn ghost icon-only" data-tip="复制 Webhook / curl" aria-label="复制 Webhook" aria-haspopup="menu" :aria-expanded="!!menuAnchor" @click="toggleCopyMenu"><Icon name="webhook" /></button>
+        <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="编辑名称和头像" aria-label="编辑会话" @click="editSession(selectedSession)"><Icon name="pencil" /></button>
         <button v-if="canCreate" class="btn ghost icon-only danger-hover" data-tip="删除会话" aria-label="删除会话" @click="emit('delete')"><Icon name="trash" /></button>
       </template>
       <span v-else class="spacer" />
@@ -152,7 +155,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
         <div v-if="!state.selected" class="welcome">
           <div class="welcome-mark"><Icon name="sparkles" :size="26" :stroke="1.5" /></div>
           <h1 class="display">{{ greeting }}<template v-if="who">，{{ who }}</template></h1>
-          <p class="muted">从左侧选择一个会话继续对话{{ canCreate ? '，或关联一个 Codex 会话' : '' }}。</p>
+          <p class="muted">从左侧选择一个会话继续对话{{ canCreate ? '，或关联一个会话' : '' }}。</p>
           <div class="welcome-actions">
             <button class="btn only-mobile" @click="state.drawer = true"><Icon name="menu" :size="14" />打开会话列表</button>
             <button v-if="canCreate" class="btn primary" @click="requestLink"><Icon name="link" :size="14" />关联会话</button>
@@ -170,7 +173,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <div v-else-if="fresh" class="welcome compact">
             <div class="welcome-mark"><Icon name="sparkles" :size="24" :stroke="1.5" /></div>
             <h1 class="display">{{ greeting }}<template v-if="who">，{{ who }}</template></h1>
-            <p class="muted">消息会进入 <span class="mono">{{ state.selected }}</span> 对应的 Codex 会话。</p>
+            <p class="muted">消息会进入 <span class="mono">{{ state.selected }}</span> 对应的会话。</p>
           </div>
           <MessageItem v-for="item in items" :key="item.key" :entry="item.entry" />
           <div v-for="f in inflight" :key="'q-' + f.id" class="inflight" :class="{ steered: f.steered }">
@@ -206,7 +209,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
             <button type="button" class="chip-x" :aria-label="`移除 ${f.name}`" data-tip="移除" @click="removeFile(state.selected, f.id)"><Icon name="x" :size="12" /></button>
           </span>
         </TransitionGroup>
-        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" placeholder="给 Codex 发消息…" @input="grow" @keydown="onKey" />
+        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" placeholder="给三代目发消息…" @input="grow" @keydown="onKey" />
         <div class="composer-tools">
           <input ref="fileInput" type="file" multiple hidden @change="onPick">
           <button type="button" class="tool-btn" :data-tip="`添加附件 · 任意类型，最多 ${limits.files} 个，每个 ≤ ${fileSize(limits.fileBytes)}`" aria-label="添加附件" :disabled="drafts.length >= limits.files" @click="fileInput?.click()"><Icon name="plus" :size="17" /></button>

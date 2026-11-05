@@ -100,7 +100,7 @@ async function main() {
   const before = fs.existsSync(path.join(dir, 'codex-home', 'sessions')) ? fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length : 0;
   for (const route of ['/webhook', '/api/send']) {
     const unknown = await call(token, route, { method: 'POST', body: { session: 'never-linked', message: 'hi' }, noLink: true });
-    assert.equal(unknown.status, 404, route); assert.match(unknown.body.error, /不会新建 Codex 会话/);
+    assert.equal(unknown.status, 404, route); assert.match(unknown.body.error, /不会新建会话/);
   }
   assert.equal(fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length, before, 'no thread was started');
   assert.ok(!JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))['never-linked']);
@@ -216,13 +216,32 @@ async function main() {
   const readSessions = () => JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'));
   // Linking requires an existing Codex thread (exec mode: rollout files under CODEX_HOME).
   const missingLink = await call(admin, '/api/sessions/linkme', { method: 'PUT', body: { codex_session_id: '01a1a610-0000-7000-8000-0000000000ff' } });
-  assert.equal(missingLink.status, 404); assert.equal(missingLink.body.error, 'Codex 里没有这个会话 ID');
+  assert.equal(missingLink.status, 404); assert.equal(missingLink.body.error, '没有这个会话 ID');
   assert.equal((await call(admin, '/api/send', { method: 'POST', body: { session: 'linkme', message: 'x', codex_session_id: '01a1a610-0000-7000-8000-0000000000ff' } })).status, 404);
   assert.equal(readSessions().linkme, undefined);
   assert.equal((await call(a, '/api/sessions/s1', { method: 'PUT', body: { codex_session_id: readSessions().s1.codex_session_id } })).status, 403);
   assert.equal((await call(admin, '/api/sessions/linkme', { method: 'PUT', body: { codex_session_id: readSessions().s1.codex_session_id } })).status, 201);
   assert.equal((await call(admin, '/api/sessions/linkme', { method: 'DELETE' })).status, 200);
   assert.equal((await call(admin, '/api/codex/threads')).status, 503, 'picker needs the app-server');
+  // Rename and avatar: admin only, stored locally, survive later session rewrites.
+  assert.equal((await call(a, '/api/sessions/s1', { method: 'PATCH', body: { name: 'x' } })).status, 403);
+  const renamed = await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { name: '  客服一号  ' } });
+  assert.equal(renamed.status, 200); assert.equal(renamed.body.session.name, '客服一号'); assert.equal(readSessions().s1.name, '客服一号');
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+  const upload = (token, body) => fetch(`${base}/api/sessions/s1/avatar`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' }, body });
+  assert.equal((await upload(a, png)).status, 403);
+  assert.equal((await upload(admin, Buffer.from('not an image at all'))).status, 415);
+  const uploaded = await (await upload(admin, png)).json();
+  assert.match(uploaded.session.avatar_url, /^\/api\/media\//);
+  const stored = readSessions().s1.avatar;
+  assert.ok(fs.existsSync(path.join(dir, 'data', 'avatars', stored)));
+  const listed = (await call(a, '/api/sessions')).body.sessions.find(s => s.key === 's1');
+  assert.equal(listed.name, '客服一号'); assert.equal(listed.avatar, undefined);
+  const img = await fetch(`${base}${listed.avatar_url}`);
+  assert.equal(img.status, 200); assert.deepEqual(Buffer.from(await img.arrayBuffer()), png);
+  assert.equal((await call(admin, '/api/sessions/s1/avatar', { method: 'DELETE' })).status, 200);
+  assert.ok(!fs.existsSync(path.join(dir, 'data', 'avatars', stored))); assert.equal(readSessions().s1.avatar, undefined);
+  assert.equal((await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { name: '' } })).body.session.name, undefined);
 
   // Only admins create sessions. A normal user can never create one implicitly, not even for a key an
   // admin pre-granted, through any endpoint (JSON send, multipart attachments, webhook, async callback).

@@ -8,6 +8,8 @@ export interface Session {
   status: SessionStatus
   queued: number
   draft?: boolean
+  name?: string
+  avatar_url?: string
 }
 export interface Attachment {
   name?: string

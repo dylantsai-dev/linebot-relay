@@ -192,10 +192,10 @@ async function main() {
   const parallel = await Promise.all([1, 2, 3].map(i => post({ session: `parallel${i}`, message: 'delay:150:test' })));
   assert.ok(parallel.every(result => result.status === 200));
   assert.ok(Date.now() - started >= 300);
-  for (const [message, status, error] of [['__exit__', 500, 'fake stderr failure'], ['__error__', 500, 'fake event failure'], ['__turn_failed__', 500, 'fake turn failure'], ['__timeout__', 504, 'Codex timed out'], ['__active_writer__', 409, 'active writer'], ['__active_writer_event__', 409, 'active writer']]) {
+  for (const [message, status, error] of [['__exit__', 500, 'fake stderr failure'], ['__error__', 500, 'fake event failure'], ['__turn_failed__', 500, 'fake turn failure'], ['__timeout__', 504, '响应超时'], ['__active_writer__', 409, '正被占用'], ['__active_writer_event__', 409, '正被占用']]) {
     const result = await post({ session: 'fail', message });
     assert.equal(result.status, status);
-    assert.ok(result.body.error.includes(error));
+    assert.ok(result.body.error.includes(error), result.body.error);
     if (status === 409) {
       assert.ok(result.body.error.length < 160);
       assert.ok(!result.body.error.includes('thread-store conflict'));

@@ -93,7 +93,7 @@ async function main() {
     assert.ok(response.headers.get('content-security-policy').includes("frame-ancestors 'none'"));
     const html = await response.text();
     assert.ok(!html.includes(token));
-    assert.ok(html.includes('Codex Relay'));
+    assert.ok(html.includes('ディランボット 三代目'));
   }
   for (const route of ['/api/whoami', '/api/sessions', '/api/requests', '/api/stats', '/api/sessions/example/history', '/api/send']) {
     assert.deepEqual(await request(route, { headers: { Authorization: '' } }), { status: 401, body: { error: 'Unauthorized' } });
@@ -148,7 +148,7 @@ async function main() {
   assert.ok(Date.now() - began >= 800, 'global semaphore limits three jobs to two slots');
   await ok({ session: 'output', message: '__output__' }, 'echo:__output__|history:1');
   await ok({ session: 'fallback', message: '__fallback__' }, 'echo:__fallback__|history:1');
-  for (const [prompt, status, error] of [['__exit__', 500, 'fake stderr failure'], ['__error__', 500, 'fake event failure'], ['__turn_failed__', 500, 'fake turn failure'], ['__timeout__', 504, 'Codex timed out']]) {
+  for (const [prompt, status, error] of [['__exit__', 500, 'fake stderr failure'], ['__error__', 500, 'fake event failure'], ['__turn_failed__', 500, 'fake turn failure'], ['__timeout__', 504, '响应超时']]) {
     const result = await post({ session: 'failures', message: prompt });
     assert.equal(result.status, status);
     assert.ok(result.body.error.includes(error));

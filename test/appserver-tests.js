@@ -234,7 +234,7 @@ async function main() {
   assert.ok(!fake.requests.some(r => r.method === 'thread/start' && r.params.serviceName), 'relay never starts a Codex thread');
   const threadStartsBefore = fake.requests.filter(r => r.method === 'thread/start').length;
   const unlinked = await post('never-linked', 'hi', undefined, { __noLink: true });
-  assert.equal(unlinked.status, 404); assert.match(unlinked.body.error, /不会新建 Codex 会话/);
+  assert.equal(unlinked.status, 404); assert.match(unlinked.body.error, /不会新建会话/);
   assert.equal(fake.requests.filter(r => r.method === 'thread/start').length, threadStartsBefore);
   assert.ok(fake.requests.every(r => !('jsonrpc' in r)));
   client.subscribed.delete(threadId);
@@ -254,7 +254,7 @@ async function main() {
   for (const message of ['__timeout__', '__late__']) {
     const result = await post('one', message);
     assert.equal(result.status, 504);
-    assert.equal(result.body.error, 'Codex timed out');
+    assert.equal(result.body.error, '响应超时');
     await pause(message === '__late__' ? 100 : 10);
   }
   assert.equal(fake.requests.filter(r => r.method === 'turn/interrupt').length, 2);
@@ -320,7 +320,7 @@ async function main() {
   assert.equal(converted[1].time, iso(1));
   assert.equal(converted[1].codex_session_id, threadId);
   assert.equal(converted.find(e => e.text === 'outside matching window').source, 'app');
-  assert.deepEqual(converted.filter(e => e.role === 'error').map(e => e.text), ['turn failure', 'Codex turn failed', 'relay-side error']);
+  assert.deepEqual(converted.filter(e => e.role === 'error').map(e => e.text), ['turn failure', '处理失败', 'relay-side error']);
   const cachedThread = client.threadState(externalId);
   await get('/api/sessions');
   const beforeFreshRead = reads();
@@ -378,7 +378,7 @@ async function main() {
   const startsBefore = turnStarts();
   const missing = await post('ghost', 'hi', ghost);
   assert.equal(missing.status, 404);
-  assert.equal(missing.body.error, 'Codex 里没有这个会话 ID');
+  assert.equal(missing.body.error, '没有这个会话 ID');
   assert.equal((await post('ghost', 'hi', 'not-a-uuid-at-all')).status, 400);
   assert.equal(turnStarts(), startsBefore);
   assert.equal((await get('/api/sessions')).body.sessions.some(s => s.key === 'ghost'), false);

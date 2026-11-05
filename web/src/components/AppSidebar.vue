@@ -3,8 +3,9 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandMark from './BrandMark.vue'
 import Icon from './Icon.vue'
 import CopyMenu from './CopyMenu.vue'
+import SessionAvatar from './SessionAvatar.vue'
 import {
-  state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
+  editSession, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
   logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink,
 } from '../store'
 import { shortTime, time } from '../lib/format'
@@ -23,7 +24,7 @@ function open(key: string) { state.tab = 'sessions'; state.drawer = false; void 
 
 /* ---- session search ---- */
 const query = ref(''), searchInput = ref<HTMLInputElement>()
-const visible = computed(() => { const q = query.value.trim().toLowerCase(); return allSessions.value.filter(s => `${s.key} ${s.codex_session_id || ''}`.toLowerCase().includes(q)) })
+const visible = computed(() => { const q = query.value.trim().toLowerCase(); return allSessions.value.filter(s => `${s.name || ''} ${s.key} ${s.codex_session_id || ''}`.toLowerCase().includes(q)) })
 const statusText = (s: { status: string; queued: number }) => s.status === 'running' ? `运行中${s.queued ? ` +${s.queued}` : ''}` : s.status === 'queued' ? `排队 ${s.queued || 1}` : ''
 const retry = () => refreshSessions().catch(e => (state.sessionsError = e.message))
 function keys(e: KeyboardEvent) {
@@ -71,11 +72,11 @@ async function savePassword() {
 <template>
   <aside class="sidebar" :class="{ open: state.drawer, rail: sidebarCollapsed }" aria-label="侧边栏">
     <div class="side-head">
-      <button class="brand" title="Codex Relay" @click="go('sessions')"><BrandMark :size="24" /><span class="brand-name">Codex Relay</span></button>
+      <button class="brand" title="ディランボット 三代目" @click="go('sessions')"><BrandMark :size="24" /><span class="brand-name">ディランボット 三代目</span></button>
       <button class="btn ghost icon-only side-toggle" :data-tip="sidebarCollapsed ? '展开侧边栏 (Ctrl+.)' : '收起侧边栏 (Ctrl+.)'" :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'" @click="toggleSidebar"><Icon :name="sidebarCollapsed ? 'panel-open' : 'panel-close'" /></button>
     </div>
 
-    <button v-if="canCreate" class="side-primary" data-tip="关联 Codex 里已有的会话" @click="requestLink">
+    <button v-if="canCreate" class="side-primary" data-tip="关联已有的会话" @click="requestLink">
       <span class="plus-dot"><Icon name="plus" :size="15" :stroke="2.2" /></span><span class="label">关联会话</span>
     </button>
 
@@ -89,7 +90,7 @@ async function savePassword() {
       <div class="side-label"><span>会话</span><span class="count">{{ visible.length }}</span></div>
       <label class="search side-search">
         <Icon name="search" :size="14" />
-        <input ref="searchInput" v-model="query" class="input" placeholder="搜索会话或 Codex ID" aria-label="搜索会话">
+        <input ref="searchInput" v-model="query" class="input" placeholder="搜索会话" aria-label="搜索会话">
         <kbd v-if="!query" class="kbd">/</kbd>
       </label>
       <div class="session-list">
@@ -102,13 +103,14 @@ async function savePassword() {
         <TransitionGroup v-else name="list" tag="div" class="session-items">
           <div v-for="s in visible" :key="s.key" class="session-row" :class="{ selected: state.selected === s.key && state.tab === 'sessions' }">
             <button type="button" class="session" :aria-pressed="state.selected === s.key" :title="`${s.key} · ${s.codex_session_id || '未关联'} · ${time(s.updated_at)}`" @click="open(s.key)">
-              <span class="dot" :class="s.status" />
-              <span class="s-key">{{ s.key }}</span>
+              <SessionAvatar :session="s" :size="20" />
+              <span class="s-key">{{ s.name || s.key }}</span>
               <span v-if="s.status === 'running' || s.status === 'queued'" class="s-spin" :title="statusText(s)" />
               <span v-else class="s-time">{{ shortTime(s.updated_at) }}</span>
             </button>
             <div class="row-actions">
-              <button v-if="s.codex_session_id" type="button" class="mini" data-tip="复制 Codex ID" :aria-label="`复制 ${s.key} 的 Codex ID`" @click="copy(s.codex_session_id)"><Icon name="copy" :size="13" /></button>
+              <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="编辑名称和头像" :aria-label="`编辑 ${s.name || s.key}`" @click="editSession(s)"><Icon name="pencil" :size="13" /></button>
+              <button v-if="s.codex_session_id" type="button" class="mini" data-tip="复制会话 ID" :aria-label="`复制 ${s.key} 的会话 ID`" @click="copy(s.codex_session_id)"><Icon name="copy" :size="13" /></button>
               <button type="button" class="mini" data-tip="复制 Webhook" :aria-label="`复制 ${s.key} 的 Webhook`" aria-haspopup="menu" @click="openMenu($event, s.key)"><Icon name="webhook" :size="13" /></button>
             </div>
           </div>

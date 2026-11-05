@@ -79,7 +79,7 @@ export function toggleTheme() { themeChoice.value = isDark.value ? 'light' : 'da
 let epoch = 0
 export class ApiError extends Error { constructor(message: string, public status: number) { super(message) } }
 export async function api<T = any>(route: string, options: RequestInit = {}, auth = true): Promise<T> {
-  const isForm = options.body instanceof FormData
+  const isForm = options.body instanceof FormData || options.body instanceof Blob
   const response = await fetch(route, { ...options, cache: 'no-store', headers: { ...(isForm || !options.body ? {} : { 'Content-Type': 'application/json' }), ...(auth ? { Authorization: `Bearer ${state.token}` } : {}) } })
   let data: any = {}
   try { data = await response.json() } catch { /* empty body */ }
@@ -242,6 +242,24 @@ export async function linkSession(key: string, codexId: string) {
   else await selectSession(key)
 }
 
+/** The edit dialog registers its opener here so the sidebar and the header can both open it. */
+let sessionEditor: ((s: Session) => void) | null = null
+export function registerSessionEditor(fn: (s: Session) => void) { sessionEditor = fn }
+export function editSession(s: Session) { sessionEditor?.(s) }
+/** Display name: the admin-set name, else the key. */
+export function sessionName(s?: Session | null, key = '') { return s?.name || s?.key || key }
+function patchSession(updated: Session) {
+  const i = state.sessions.findIndex(s => s.key === updated.key)
+  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url }
+}
+export async function renameSession(key: string, name: string) {
+  const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+  patchSession(data.session)
+}
+export async function setSessionAvatar(key: string, image: Blob | null) {
+  const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}/avatar`, image ? { method: 'PUT', body: image } : { method: 'DELETE' })
+  patchSession(data.session)
+}
 export async function deleteSession(key: string) {
   if (state.sessions.some(s => s.key === key) || state.pending.has(key)) await api(`/api/sessions/${keyPath(key)}`, { method: 'DELETE' })
   state.drafts.delete(key)

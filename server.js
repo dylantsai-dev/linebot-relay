@@ -56,6 +56,9 @@ async function seedAdmin() {
   catch (error) { console.error('Admin seed failed:', error.message); }
 }
 const historyDir = path.join(config.data, 'history');
+// Session avatars live in a local folder next to the other data; sessions.json keeps only the file name.
+const avatarDir = path.join(config.data, 'avatars');
+fs.mkdirSync(avatarDir, { recursive: true });
 fs.mkdirSync(historyDir, { recursive: true });
 const requestsFile = path.join(config.data, 'requests.jsonl');
 const live = new Map();
@@ -234,7 +237,7 @@ function threadHistory(thread, local) {
     }
     if (turn.status === 'interrupted') history.push({ role: 'error', text: '回合已停止', time, interrupted: true });
     if (turn.status === 'failed') {
-      const text = turn.error?.message || 'Codex turn failed';
+      const text = turn.error?.message || '处理失败';
       history.push({ role: 'error', text, time });
       for (const entry of local) if (entry.role === 'error' && entry.text === text && Math.abs(Date.parse(entry.time) - Date.parse(time)) <= 180000) matchedErrors.add(entry);
     }
@@ -339,22 +342,22 @@ function rolloutExists(id) {
 }
 // Resolves when Codex knows the thread; otherwise throws 404 without creating anything.
 async function verifyThread(id) {
-  if (!validThreadId(id)) throw failure('Codex 会话 ID 格式不正确（应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079）', 400);
+  if (!validThreadId(id)) throw failure('会话 ID 格式不正确（应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079）', 400);
   if (appserver && fs.existsSync(appserverSocket)) {
     try {
       await appserver.connect();
       const result = await appserver.request('thread/read', { threadId: id, includeTurns: false }, 8000);
       if (result?.thread?.id) return result.thread;
     } catch (error) {
-      if (!/not loaded|not found|no rollout|invalid thread|unknown thread|does not exist/i.test(error.message) && !error.appserverConnection && !/timed out/i.test(error.message)) throw failure(`无法验证 Codex 会话 ID：${error.message}`, 502);
+      if (!/not loaded|not found|no rollout|invalid thread|unknown thread|does not exist/i.test(error.message) && !error.appserverConnection && !/timed out/i.test(error.message)) throw failure(`无法验证会话 ID：${error.message}`, 502);
     }
   }
   if (rolloutExists(id)) return { id };
-  throw failure('Codex 里没有这个会话 ID', 404);
+  throw failure('没有这个会话 ID', 404);
 }
 async function listCodexThreads(url) {
-  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('Codex app-server 未连接，无法列出会话；可以手动输入会话 ID', 503);
-  try { await appserver.connect(); } catch { throw failure('Codex app-server 未连接，无法列出会话；可以手动输入会话 ID', 503); }
+  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('后台服务未连接，无法列出会话；可以手动输入会话 ID', 503);
+  try { await appserver.connect(); } catch { throw failure('后台服务未连接，无法列出会话；可以手动输入会话 ID', 503); }
   const params = { limit: limitOf(url, 40, 100), sortKey: 'updated_at', sortDirection: 'desc', sourceKinds: ['cli', 'vscode', 'exec', 'appServer'] };
   const q = (url.searchParams.get('q') || '').trim().slice(0, 200), cursor = url.searchParams.get('cursor');
   if (q) params.searchTerm = q;
@@ -405,7 +408,7 @@ async function runCodex(key, message, sessionId, input) {
     await appserver.connect();
     let threadId = sessionId;
     // The relay never starts Codex threads; every session must point at an existing one.
-    if (!threadId) throw failure('该会话未关联 Codex 会话，控制台不能新建 Codex 会话', 403);
+    if (!threadId) throw failure('该会话未关联，控制台不能新建会话', 403);
     await appserver.subscribe(threadId);
     // Once sent, a lost response cannot prove the turn was not accepted.
     submitted = true;
@@ -419,7 +422,7 @@ async function runCodex(key, message, sessionId, input) {
 }
 
 function runCodexExec(key, message, sessionId) {
-  if (!sessionId) return Promise.reject(failure('该会话未关联 Codex 会话，控制台不能新建 Codex 会话', 403));
+  if (!sessionId) return Promise.reject(failure('该会话未关联，控制台不能新建会话', 403));
   return new Promise((resolve, reject) => {
     const workdir = path.join(config.work, safeKey(key));
     fs.mkdirSync(workdir, { recursive: true });
@@ -445,8 +448,8 @@ function runCodexExec(key, message, sessionId) {
       }
       if (event.type === 'item.completed' && ['agent_message', 'assistant_message'].includes(event.item?.type) && typeof event.item.text === 'string') reply = event.item.text;
       if (event.msg?.type === 'agent_message' && typeof event.msg.message === 'string') reply = event.msg.message;
-      if (event.type === 'turn.failed') eventError = event.error?.message || 'Codex turn failed';
-      if (event.type === 'error') eventError = event.message || event.error?.message || 'Codex error';
+      if (event.type === 'turn.failed') eventError = event.error?.message || '处理失败';
+      if (event.type === 'error') eventError = event.message || event.error?.message || '处理出错';
       if (/already has an active writer/i.test(eventError || '')) activeWriter = true;
     }
     child.stdout.setEncoding('utf8');
@@ -475,16 +478,16 @@ function runCodexExec(key, message, sessionId) {
       clearTimeout(timer);
       if (buffer) parse(buffer);
       try {
-        if (timedOut) throw failure('Codex timed out', 504);
+        if (timedOut) throw failure('响应超时', 504);
         if (spawnError) throw spawnError;
-        if (activeWriter) throw failure('该 Codex 会话正被 Codex App 占用（active writer），且无法连接 app-server，暂时无法投递；请确认 app-server 正在运行', 409);
+        if (activeWriter) throw failure('该会话正被占用，且后台服务未连接，暂时无法投递；请确认 app-server 正在运行', 409);
         if (eventError) throw failure(eventError);
-        if (code !== 0) throw failure(stderr || `Codex exited with code ${code}`);
+        if (code !== 0) throw failure(stderr || `后台进程退出（代码 ${code}）`);
         try {
           const contents = fs.readFileSync(output, 'utf8');
           if (contents.trim()) reply = contents;
         } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        if (typeof id !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(id)) throw failure('Codex did not return a valid session id');
+        if (typeof id !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(id)) throw failure('后台没有返回有效的会话 ID');
         resolve({ session: key, codex_session_id: id, reply });
       } catch (error) { error.transport = 'exec'; reject(error); }
       finally { try { fs.unlinkSync(output); } catch {} }
@@ -567,13 +570,13 @@ async function runEntry(key, entry) {
     appendHistory(key, { role: 'user', text: entry.message, ...(entry.attachments.length ? { attachments: entry.attachments } : {}), time: new Date().toISOString(), source: entry.source, request_id: entry.request_id, ...(entry.mode === 'steer' ? { mode: 'steer' } : {}) });
     if (entry.codex_session_id) {
       const now = new Date().toISOString();
-      sessions[key] = { codex_session_id: entry.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.messages || 0 };
+      sessions[key] = { ...sessions[key], codex_session_id: entry.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.messages || 0 };
       persist();
       if (appserver) void appserver.subscribe(entry.codex_session_id).catch(() => {});
     }
     const result = await runCodex(key, entry.input ? entry.input.filter(part => part.type === 'text').map(part => part.text).join('\n') : entry.message, sessions[key]?.codex_session_id, entry.input);
     const now = new Date().toISOString();
-    sessions[key] = { codex_session_id: result.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: (sessions[key]?.messages || 0) + 1 };
+    sessions[key] = { ...sessions[key], codex_session_id: result.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: (sessions[key]?.messages || 0) + 1 };
     persist();
     appendHistory(key, { role: 'assistant', text: result.reply, time: now, duration_ms: Date.now() - started, codex_session_id: result.codex_session_id, request_id: entry.request_id });
     return { ...result, mode: entry.mode, ...(entry.fallback ? { steer: entry.fallback } : {}) };
@@ -666,8 +669,8 @@ async function steerQueued(key, id, principal) {
 }
 async function interruptSession(key) {
   const id = sessions[key]?.codex_session_id;
-  if (!id) throw failure('会话不存在或未关联 Codex 会话', 404);
-  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('Codex app-server 未连接，无法停止', 503);
+  if (!id) throw failure('会话不存在或未关联', 404);
+  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('后台服务未连接，无法停止', 503);
   await appserver.connect();
   const turnId = appserver.activeTurnId(id) || await appserver.refreshActive(id);
   if (!turnId) throw failure('当前没有正在运行的回合', 409);
@@ -693,7 +696,7 @@ function userCanUse(principal, key) { return principal.admin || (users.isGranted
 function authorizeSend(principal, body) {
   if (principal.admin) return;
   if (!userCanUse(principal, body.session)) throw failure('会话不存在', 404);
-  if (body.codex_session_id !== undefined) throw failure('仅管理员可以绑定 Codex ID', 403);
+  if (body.codex_session_id !== undefined) throw failure('仅管理员可以绑定会话 ID', 403);
 }
 function fileVisible(principal, rawPath) {
   if (principal.admin) return true;
@@ -702,6 +705,26 @@ function fileVisible(principal, rawPath) {
     const top = relative.split(path.sep)[0];
     return !!top && top !== '..' && !path.isAbsolute(relative) && users.grants(principal.user.id).some(key => safeKey(key) === top);
   } catch { return false; }
+}
+// Public view of a session: the avatar file name becomes a signed URL (an <img> cannot send a bearer token).
+function publicSession(entry, principal) {
+  const { avatar, ...rest } = entry;
+  const url = avatar ? media.url(path.join(avatarDir, avatar), [avatarDir], entry.key, principalUid(principal)) : null;
+  return url ? { ...rest, avatar_url: url } : rest;
+}
+const AVATAR_TYPES = [['png', b => b[0] === 0x89 && b.subarray(1, 4).toString() === 'PNG'], ['jpg', b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
+  ['gif', b => b.subarray(0, 4).toString() === 'GIF8'], ['webp', b => b.subarray(0, 4).toString() === 'RIFF' && b.subarray(8, 12).toString() === 'WEBP']];
+function removeAvatar(key) {
+  const name = sessions[key]?.avatar;
+  if (name) try { fs.unlinkSync(path.join(avatarDir, path.basename(name))); } catch { /* already gone */ }
+}
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0, done = false;
+    req.on('data', chunk => { if (done) return; size += chunk.length; if (size > limit) { done = true; reject(failure('头像图片不能超过 2MB', 413)); return; } chunks.push(chunk); });
+    req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(chunks)); } });
+    req.on('error', error => { if (!done) { done = true; reject(error); } });
+  });
 }
 function readJson(req, limit = 65536) {
   return new Promise((resolve, reject) => {
@@ -759,7 +782,7 @@ function send(res, status, body) {
 }
 function validate(body) {
   if (!body || typeof body !== 'object' || typeof body.session !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(body.session) || (body.message !== undefined && typeof body.message !== 'string') || (!body.message?.trim() && !body.files?.length && !body.file_urls?.length && !body._fileCount)) throw failure('Invalid session or message', 400);
-  if (body.codex_session_id !== undefined && !validThreadId(body.codex_session_id)) throw failure('Invalid codex_session_id: Codex 会话 ID 应为 UUID', 400);
+  if (body.codex_session_id !== undefined && !validThreadId(body.codex_session_id)) throw failure('Invalid codex_session_id: 会话 ID 应为 UUID', 400);
   if (body.callback_url !== undefined) {
     let url;
     try { url = new URL(body.callback_url); } catch { throw failure('Invalid callback_url', 400); }
@@ -954,7 +977,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'GET' && route === '/api/sessions') {
         const listing = await sessionListing();
-        send(res, 200, { sessions: visible ? listing.filter(s => visible.has(s.key)) : listing }); return;
+        send(res, 200, { sessions: (visible ? listing.filter(s => visible.has(s.key)) : listing).map(s => publicSession(s, principal)) }); return;
       }
       if (req.method === 'GET' && route === '/api/requests') {
         const entries = visible ? recentRequests.filter(entry => visible.has(entry.session)) : recentRequests;
@@ -969,7 +992,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
       if (match) {
         let key;
         try {
@@ -981,16 +1004,42 @@ const server = http.createServer(async (req, res) => {
         const file = path.join(historyDir, `${safeKey(key)}.jsonl`);
         // Admin: link (or re-link) a key to an existing Codex thread without sending a message.
         if (req.method === 'PUT' && !match[2]) {
-          if (!principal.admin) throw failure('仅管理员可以关联 Codex 会话', 403);
+          if (!principal.admin) throw failure('仅管理员可以关联会话', 403);
           const input = await readJson(req);
-          if (!validThreadId(input.codex_session_id)) throw failure('Codex 会话 ID 格式不正确（应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079）', 400);
+          if (!validThreadId(input.codex_session_id)) throw failure('会话 ID 格式不正确（应为 UUID，例如 01a1a610-8626-7623-aba8-66d060441079）', 400);
           if (live.has(key)) throw failure('Session is running or queued', 409);
           await verifyThread(input.codex_session_id);
           const now = new Date().toISOString(), existed = !!sessions[key];
-          sessions[key] = { codex_session_id: input.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.codex_session_id === input.codex_session_id ? sessions[key].messages || 0 : 0 };
+          sessions[key] = { ...sessions[key], codex_session_id: input.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.codex_session_id === input.codex_session_id ? sessions[key].messages || 0 : 0 };
           persist();
           if (appserver) void appserver.subscribe(input.codex_session_id).catch(() => {});
           send(res, existed ? 200 : 201, { session: { key, ...sessions[key] } }); return;
+        }
+        // Admin: rename a session (display name only; the key and the Codex thread stay the same).
+        if (req.method === 'PATCH' && !match[2]) {
+          if (!principal.admin) throw failure('仅管理员可以重命名会话', 403);
+          if (!sessions[key]) throw failure('会话不存在', 404);
+          const input = await readJson(req);
+          if (typeof input.name !== 'string') throw failure('名称格式不正确', 400);
+          const name = input.name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+          if (name.length > 60) throw failure('名称最多 60 个字符', 400);
+          if (name && name !== key) sessions[key].name = name; else delete sessions[key].name;
+          persist();
+          send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return;
+        }
+        // Admin: set or clear a session avatar (PNG/JPEG/GIF/WebP, stored under data/avatars).
+        if ((req.method === 'PUT' || req.method === 'DELETE') && match[2] === '/avatar') {
+          if (!principal.admin) throw failure('仅管理员可以设置会话头像', 403);
+          if (!sessions[key]) throw failure('会话不存在', 404);
+          if (req.method === 'DELETE') { removeAvatar(key); delete sessions[key].avatar; persist(); send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return; }
+          const body = await readRaw(req, 2 * 1024 * 1024);
+          const type = AVATAR_TYPES.find(([, test]) => body.length > 12 && test(body));
+          if (!type) throw failure('只支持 PNG、JPG、GIF 或 WebP 图片', 415);
+          const name = `${safeKey(key)}-${crypto.randomBytes(6).toString('hex')}.${type[0]}`;
+          fs.writeFileSync(path.join(avatarDir, name), body, { mode: 0o600 });
+          removeAvatar(key);
+          sessions[key].avatar = name; persist();
+          send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return;
         }
         if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
         if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550), principal)); return; }
@@ -1003,7 +1052,7 @@ const server = http.createServer(async (req, res) => {
           if (!principal.admin) throw failure('仅管理员可以删除会话', 403);
           if (live.has(key)) throw failure('Session is running or queued', 409);
           if (!sessions[key] && !fs.existsSync(file)) throw failure('Session not found', 404);
-          delete sessions[key]; persist(); users.forgetSession(key);
+          removeAvatar(key); delete sessions[key]; persist(); users.forgetSession(key);
           try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
           send(res, 200, { ok: true }); return;
         }
@@ -1020,7 +1069,7 @@ const server = http.createServer(async (req, res) => {
     // Linking must name a thread that exists in Codex; nothing is created otherwise.
     if (body.codex_session_id !== undefined && body.codex_session_id !== sessions[body.session]?.codex_session_id) await verifyThread(body.codex_session_id);
     // Never create a Codex thread: unknown/unlinked sessions are rejected before anything is queued.
-    if (!(body.codex_session_id || sessions[body.session]?.codex_session_id)) throw failure('会话不存在或未关联 Codex 会话；控制台和 webhook 不会新建 Codex 会话，请让管理员关联已有会话', 404);
+    if (!(body.codex_session_id || sessions[body.session]?.codex_session_id)) throw failure('会话不存在或未关联；控制台和 webhook 不会新建会话，请让管理员关联已有会话', 404);
     if (!body.message?.trim()) body.message = '请查看附件。';
     const prepared = await prepareAttachments(body, parsed.files, config, safeKey);
     body.attachments = prepared.attachments;
