@@ -79,7 +79,7 @@ const valid = computed(() => /^[\p{L}\p{N}_.@-]{2,32}$/u.test(username.value.tri
       </div>
 
       <div class="grant-head">
-        <label class="field-label">可见会话</label>
+        <label class="field-label">可见会话（可多人共享同一会话）</label>
         <span class="grant-count mono">{{ role === 'admin' ? '全部' : `${granted.size} / ${rows.length}` }}</span>
       </div>
       <div v-if="role === 'admin'" class="grant-admin"><Icon name="shield" :size="14" />管理员可以查看、新建和删除全部会话，无需单独授权。</div>

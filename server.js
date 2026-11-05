@@ -1286,7 +1286,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/prompts\/[A-Za-z0-9_-]{1,64}|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/users|\/prompts\/[A-Za-z0-9_-]{1,64}|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
       if (match) {
         let key;
         try {
@@ -1318,6 +1318,19 @@ const server = http.createServer(async (req, res) => {
           if (!sessions[key]) throw failure('会话不存在', 404);
           if (!sessions[key].hook || req.method === 'POST') { sessions[key].hook = newHook(sessions[key].hook?.id); persist(); }
           send(res, 200, { webhook: hookView(key) }); return;
+        }
+        // Admin: who may use this session (multi-user share). Admins always see everything and are omitted.
+        if ((req.method === 'GET' || req.method === 'PUT') && match[2] === '/users') {
+          if (!principal.admin) throw failure('仅管理员可以分配会话', 403);
+          if (!sessions[key]) throw failure('会话不存在', 404);
+          if (req.method === 'GET') {
+            const assigned = users.grantees(key);
+            const candidates = users.list().filter(u => u.role !== 'admin');
+            send(res, 200, { session: key, users: candidates, assigned: assigned.map(u => u.id) }); return;
+          }
+          const input = await readJson(req, 64 * 1024);
+          const assigned = users.setSessionUsers(key, input.user_ids || input.users || []);
+          send(res, 200, { session: key, assigned: assigned.map(u => u.id), users: assigned }); return;
         }
         // Admin: rename a session (display name only; the key and the Codex thread stay the same),
         // and/or pause it: a paused session rejects webhook messages; the console still works.

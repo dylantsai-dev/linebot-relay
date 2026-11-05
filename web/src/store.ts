@@ -775,6 +775,19 @@ export async function sessionWebhook(key: string) { return (await api<{ webhook:
 /** Replaces the key; the old one stops working immediately. The URL stays the same. */
 export async function rotateWebhook(key: string) { return (await api<{ webhook: SessionWebhook }>(`/api/sessions/${keyPath(key)}/webhook/rotate`, { method: 'POST' })).webhook }
 
+
+/* ---------- session → users (admin share) ---------- */
+export interface SessionUsersPayload { session: string; users: User[]; assigned: number[] }
+let sessionAssigner: ((s: Session) => void) | null = null
+export function registerSessionAssigner(fn: (s: Session) => void) { sessionAssigner = fn }
+export function assignSession(s: Session) { sessionAssigner?.(s) }
+export async function fetchSessionUsers(key: string) {
+  return api<SessionUsersPayload>(`/api/sessions/${keyPath(key)}/users`)
+}
+export async function setSessionUsers(key: string, userIds: number[]) {
+  return api<{ session: string; assigned: number[]; users: User[] }>(`/api/sessions/${keyPath(key)}/users`, { method: 'PUT', body: JSON.stringify({ user_ids: userIds }) })
+}
+
 /* ---------- users (admin) ---------- */
 export const users = reactive({ list: [] as User[], loaded: false, loading: false, error: '' })
 export async function refreshUsers() {

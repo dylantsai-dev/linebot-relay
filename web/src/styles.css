@@ -245,6 +245,7 @@ h1, h2, h3, .display { font-family: var(--serif); font-weight: 500; letter-spaci
 .user-avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: var(--bg); font: 600 12.5px/1 var(--sans); flex: none; }
 .user-avatar.token { background: var(--accent-soft); color: var(--accent); }
 .user-avatar.lg { width: 36px; height: 36px; font-size: 14px; }
+.user-avatar.sm { width: 22px; height: 22px; font-size: 10.5px; }
 .user-meta { display: grid; min-width: 0; flex: 1; line-height: 1.3; }
 .user-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-role { font-size: 11.5px; color: var(--muted); }
@@ -592,6 +593,7 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .grant-row:hover { background: var(--bg-hover); }
 .grant-row input { margin: 0; width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
 .grant-row.on { background: var(--accent-soft); }
+.grant-row.off { opacity: .55; }
 .grant-row.on .grant-key { font-weight: 500; }
 .grant-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grant-meta, .grant-time { font-size: 11px; color: var(--faint); white-space: nowrap; }

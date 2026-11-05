@@ -187,6 +187,7 @@ On first visit with no admin yet, log in with `WEBHOOK_TOKEN` and create one (or
 | `GET` | `/api/webhook-token` | 👑 | Get the token (for curl snippets) |
 | `GET/POST` | `/api/users` | 👑 | List / create users |
 | `GET/PATCH/DELETE` | `/api/users/:id` | 👑 | Read / update / delete a user |
+| `GET` / `PUT` | `/api/sessions/:key/users` | 👑 | List / set users shared on this session |
 | `PUT` | `/api/users/:id/sessions` | 👑 | Set session grants |
 | `POST` | `/api/users/:id/password` | 👑 | Reset password |
 

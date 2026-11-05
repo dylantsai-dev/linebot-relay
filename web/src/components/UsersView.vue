@@ -69,7 +69,7 @@ async function saveFeishu() {
   <div class="page">
     <div class="page-inner">
       <div class="page-head row">
-        <div><h1><span class="title-icon"><Icon name="users" :size="18" /></span>用户</h1><p class="muted">管理员可以访问全部会话；普通用户只能看到被授权的会话。</p></div>
+        <div><h1><span class="title-icon"><Icon name="users" :size="18" /></span>用户</h1><p class="muted">管理员可以访问全部会话；同一会话可分配给多个普通用户共享（侧栏「分配给…」或在此编辑用户）。</p></div>
         <button class="btn primary" @click="editor?.open(null)"><Icon name="user-plus" :size="15" />新建用户</button>
       </div>
 
@@ -152,7 +152,7 @@ async function saveFeishu() {
           <div class="state-icon"><Icon name="users" :size="20" /></div><strong>{{ users.list.length ? '没有匹配的用户' : '还没有用户' }}</strong><span v-if="!users.list.length">点击右上角「新建用户」添加第一个账号。</span>
         </div>
       </div>
-      <p class="users-foot muted"><Icon name="key" :size="12" />只有管理员可以新建和删除会话；普通用户只能查看被授权的会话并在其中发消息。访问令牌（WEBHOOK_TOKEN）始终拥有全部权限，可用于 Webhook 集成和找回管理员。</p>
+      <p class="users-foot muted"><Icon name="key" :size="12" />只有管理员可以关联、分配和删除会话；普通用户只能查看被授权的会话并在其中发消息。同一会话可共享给多人。访问令牌（WEBHOOK_TOKEN）始终拥有全部权限。</p>
     </div>
     <UserDialog ref="editor" />
     <dialog ref="pwDialog" class="dialog" @click.self="pwDialog?.close()">

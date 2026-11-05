@@ -4,7 +4,7 @@ import BrandMark from './BrandMark.vue'
 import Icon from './Icon.vue'
 import SessionAvatar from './SessionAvatar.vue'
 import {
-  editSession, openWebhook, setSessionPaused, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
+  editSession, assignSession, openWebhook, setSessionPaused, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
   logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink, requestDelete,
 } from '../store'
 import { canInstall, showIosInstallHint, installPwa } from '../lib/pwa'
@@ -122,6 +122,7 @@ async function savePassword() {
             </button>
             <div class="row-actions">
               <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="编辑名称和头像" :aria-label="`编辑 ${s.name || s.key}`" @click="editSession(s)"><Icon name="pencil" :size="13" /></button>
+              <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="分配给…" :aria-label="`分配 ${s.name || s.key} 给用户`" aria-haspopup="dialog" @click="assignSession(s)"><Icon name="users" :size="13" /></button>
               <button v-if="s.codex_session_id" type="button" class="mini" data-tip="复制会话 ID" :aria-label="`复制 ${s.key} 的会话 ID`" @click="copy(s.codex_session_id)"><Icon name="copy" :size="13" /></button>
               <button v-if="canCreate && !s.draft" type="button" class="mini" :data-tip="s.paused ? '恢复接收' : '暂停接收'" :aria-label="`${s.paused ? '恢复' : '暂停'}接收 ${s.name || s.key}`" @click="setSessionPaused(s.key, !s.paused).catch(e => toast(e.message))"><Icon :name="s.paused ? 'play' : 'pause'" :size="13" /></button>
               <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="Webhook" :aria-label="`${s.name || s.key} 的 Webhook`" aria-haspopup="dialog" @click="openWebhook(s)"><Icon name="webhook" :size="13" /></button>

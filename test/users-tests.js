@@ -332,6 +332,41 @@ async function main() {
   for (const key of ['pre-granted', 'tok-new']) assert.equal((await call(admin, `/api/sessions/${key}`, { method: 'DELETE' })).status, 200);
   assert.deepEqual((await call(admin, `/api/users/${alice.id}`)).body.user.sessions, ['s1'], 'deleting a session drops its grants');
 
+  // Multi-user share: one session can be granted to several ordinary users at once.
+  assert.equal((await call(a, `/api/sessions/s1/users`)).status, 403, 'only admins list assignees');
+  assert.equal((await call(a, `/api/sessions/s1/users`, { method: 'PUT', body: { user_ids: [bob.id] } })).status, 403);
+  const listedUsers = await call(admin, '/api/sessions/s1/users');
+  assert.equal(listedUsers.status, 200);
+  assert.deepEqual(listedUsers.body.assigned.sort(), [alice.id]);
+  assert.ok(listedUsers.body.users.every(u => u.role === 'user'));
+  assert.ok(listedUsers.body.users.some(u => u.id === bob.id));
+  assert.ok(!listedUsers.body.users.some(u => u.role === 'admin'), 'admins are not assign candidates');
+  // Share s1 with alice + bob via session-centric API (keeps alice's other grants alone when we set only s1).
+  const shared = await call(admin, '/api/sessions/s1/users', { method: 'PUT', body: { user_ids: [alice.id, bob.id, adminId] } });
+  assert.equal(shared.status, 200);
+  assert.deepEqual(shared.body.assigned.sort(), [alice.id, bob.id], 'admin ids in the payload are ignored');
+  assert.deepEqual((await call(admin, `/api/users/${alice.id}`)).body.user.sessions, ['s1']);
+  assert.deepEqual((await call(admin, `/api/users/${bob.id}`)).body.user.sessions, ['s1']);
+  assert.deepEqual((await call(a, '/api/sessions')).body.sessions.map(s => s.key), ['s1']);
+  assert.deepEqual((await call(b, '/api/sessions')).body.sessions.map(s => s.key), ['s1']);
+  assert.equal((await call(b, '/api/sessions/s1/history')).status, 200);
+  const bobSend = await call(b, '/api/send', { method: 'POST', body: { session: 's1', message: 'from bob shared' } });
+  assert.equal(bobSend.status, 200); assert.match(bobSend.body.reply, /echo:from bob shared/);
+  // Shared ordinary users still cannot touch admin controls.
+  assert.equal((await call(b, '/api/sessions/s1', { method: 'PATCH', body: { model: 'x' } })).status, 403);
+  assert.equal((await call(b, '/api/sessions/s1', { method: 'PATCH', body: { approval_mode: 'full' } })).status, 403);
+  assert.equal((await call(b, '/api/models')).status, 403);
+  assert.equal((await call(b, '/api/sessions/s1/users')).status, 403);
+  // Unshare bob; alice keeps access.
+  assert.equal((await call(admin, '/api/sessions/s1/users', { method: 'PUT', body: { user_ids: [alice.id] } })).status, 200);
+  assert.equal((await call(b, '/api/sessions/s1/history')).status, 404);
+  assert.deepEqual((await call(a, '/api/sessions')).body.sessions.map(s => s.key), ['s1']);
+  // Clearing assignees leaves the session itself intact.
+  assert.equal((await call(admin, '/api/sessions/s1/users', { method: 'PUT', body: { user_ids: [] } })).status, 200);
+  assert.deepEqual((await call(admin, '/api/sessions/s1/users')).body.assigned, []);
+  assert.ok(sessionsJson().s1, 'session remains after clearing assignees');
+  await call(admin, `/api/users/${alice.id}/sessions`, { method: 'PUT', body: { sessions: ['s1'] } });
+
   // Bulk grants.
   assert.equal((await call(admin, `/api/users/${alice.id}/sessions`, { method: 'PUT', body: { sessions: ['../x'] } })).status, 400);
   assert.deepEqual((await call(admin, `/api/users/${alice.id}/sessions`, { method: 'PUT', body: { sessions: ['s2', 's1', 's1'] } })).body.sessions, ['s1', 's2']);

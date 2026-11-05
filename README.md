@@ -187,6 +187,7 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 | `GET` | `/api/webhook-token` | 👑 | 获取 Token（生成 curl 用） |
 | `GET/POST` | `/api/users` | 👑 | 用户列表 / 新建 |
 | `GET/PATCH/DELETE` | `/api/users/:id` | 👑 | 用户详情 / 修改 / 删除 |
+| `GET` / `PUT` | `/api/sessions/:key/users` | 👑 | 查看 / 设置该会话的共享用户（同一会话可多人） |
 | `PUT` | `/api/users/:id/sessions` | 👑 | 设置会话授权 |
 | `POST` | `/api/users/:id/password` | 👑 | 重置密码 |
 

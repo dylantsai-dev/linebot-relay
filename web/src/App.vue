@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { state, restoreLogin, sidebarCollapsed, registerSessionEditor, registerWebhookViewer } from './store'
+import { state, restoreLogin, sidebarCollapsed, registerSessionEditor, registerWebhookViewer, registerSessionAssigner } from './store'
 import LoginView from './components/LoginView.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import SessionsView from './components/SessionsView.vue'
@@ -13,11 +13,14 @@ import SetupBanner from './components/SetupBanner.vue'
 import PageBar from './components/PageBar.vue'
 import SessionDialog from './components/SessionDialog.vue'
 import WebhookDialog from './components/WebhookDialog.vue'
+import AssignDialog from './components/AssignDialog.vue'
 onMounted(restoreLogin)
 const sessionDialog = ref<InstanceType<typeof SessionDialog>>()
 registerSessionEditor(s => sessionDialog.value?.open(s))
 const webhookDialog = ref<InstanceType<typeof WebhookDialog>>()
 registerWebhookViewer(s => webhookDialog.value?.open(s))
+const assignDialog = ref<InstanceType<typeof AssignDialog>>()
+registerSessionAssigner(s => assignDialog.value?.open(s))
 </script>
 <template>
   <div v-if="state.booting" class="boot"><span class="spinner" /></div>
@@ -38,6 +41,7 @@ registerWebhookViewer(s => webhookDialog.value?.open(s))
   </div>
   <SessionDialog ref="sessionDialog" />
   <WebhookDialog ref="webhookDialog" />
+  <AssignDialog ref="assignDialog" />
   <ToastBar />
   <Lightbox />
 </template>
