@@ -49,7 +49,7 @@ const zoom = (src: string) => (state.lightbox = { src, alt: '生成的图片' })
   <article class="msg assistant live-turn" aria-live="polite">
     <div class="msg-avatar assistant working" aria-hidden="true"><Icon name="sparkles" :size="15" :stroke="1.6" /></div>
     <div class="msg-main">
-      <ul v-if="activity.length || commentary.length" class="activity">
+      <ul v-if="!html && (activity.length || commentary.length)" class="activity">
         <li v-for="c in commentary" :key="c.id" class="act commentary">{{ (c.text || '').replace(/\s+/g, ' ').slice(0, 200) }}</li>
         <li v-for="a in activity" :key="a.id" class="act" :class="[a.kind, { done: a.done, failed: a.status === 'failed' || (a.exitCode ?? 0) !== 0 }]">
           <span class="act-icon"><Icon :name="icon(a.kind)" :size="13" /></span>
@@ -63,7 +63,7 @@ const zoom = (src: string) => (state.lightbox = { src, alt: '生成的图片' })
       <div v-if="images.length" class="gen-images">
         <button v-for="img in images" :key="img.id" type="button" class="gen-image" @click="zoom(img.url!)"><img :src="img.url" alt="生成的图片" loading="lazy" referrerpolicy="no-referrer"></button>
       </div>
-      <div class="typing"><span>{{ html ? '输出中' : activity.length ? '工作中' : '思考中' }}</span><span class="dots"><i /><i /><i /></span><span v-if="elapsed !== undefined" class="mono">{{ elapsed }}s</span><span class="badge live">实时</span></div>
+      <div v-if="!html" class="typing"><span>{{ html ? '输出中' : activity.length ? '工作中' : '思考中' }}</span><span class="dots"><i /><i /><i /></span><span v-if="elapsed !== undefined" class="mono">{{ elapsed }}s</span><span class="badge live">实时</span></div>
     </div>
   </article>
 </template>
