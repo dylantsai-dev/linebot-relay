@@ -12,12 +12,20 @@ const dialog = ref<HTMLDialogElement>()
 const session = ref<Session | null>(null), hook = ref<SessionWebhook | null>(null)
 const loading = ref(false), error = ref(''), reveal = ref(false), confirming = ref(false), rotating = ref(false)
 
+/** Drop focus from sidebar row mini-buttons so :focus / sticky hover cannot pin the floating toolbar after close. */
+function clearRowActionFocus() {
+  const el = document.activeElement as HTMLElement | null
+  if (el?.closest?.('.row-actions, .session-row')) el.blur()
+}
+
 async function open(s: Session) {
   session.value = s; hook.value = null; error.value = ''; reveal.value = false; confirming.value = false
+  clearRowActionFocus()
   dialog.value?.showModal()
   loading.value = true
   try { hook.value = await sessionWebhook(s.key) } catch (e) { error.value = (e as Error).message } finally { loading.value = false }
 }
+function onClose() { clearRowActionFocus() }
 defineExpose({ open })
 
 const url = computed(() => (hook.value ? publicOrigin() + hook.value.path : ''))
@@ -33,7 +41,7 @@ async function rotate() {
 }
 </script>
 <template>
-  <dialog ref="dialog" class="dialog wide" @click.self="dialog?.close()">
+  <dialog ref="dialog" class="dialog wide" @close="onClose" @click.self="dialog?.close()">
     <div class="dialog-head">
       <h2><span class="title-icon"><Icon name="webhook" :size="17" /></span>Webhook</h2>
       <button type="button" class="btn ghost icon-only sm" aria-label="关闭" data-tip="关闭 (Esc)" @click="dialog?.close()"><Icon name="x" :size="15" /></button>

@@ -213,7 +213,15 @@ h1, h2, h3, .display { font-family: var(--serif); font-weight: 500; letter-spaci
 .s-status { font-size: 11px; color: var(--accent); white-space: nowrap; font-weight: 500; }
 .row-actions { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: flex; gap: 1px; opacity: 0; pointer-events: none; transition: opacity .12s; padding-left: 12px; background: linear-gradient(90deg, transparent, var(--bg-hover) 12px); border-radius: 0 9px 9px 0; }
 .session-row.selected .row-actions { background: linear-gradient(90deg, transparent, var(--bg-active) 12px); }
-.session-row:hover .row-actions, .session-row:focus-within .row-actions { opacity: 1; pointer-events: auto; }
+/* Hover only on fine pointers — touch sticky :hover must not pin the toolbar on another row.
+   Keyboard: :focus-visible (not bare :focus-within), so closing a dialog that restores focus
+   to a mini button does not leave the floating actions stuck. */
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover .row-actions { opacity: 1; pointer-events: auto; }
+  .session-row:hover .s-time, .session-row:hover .s-status { visibility: hidden; }
+}
+.session-row:has(:focus-visible) .row-actions { opacity: 1; pointer-events: auto; }
+.session-row:has(:focus-visible) .s-time, .session-row:has(:focus-visible) .s-status { visibility: hidden; }
 .mini { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
 .mini:hover { color: var(--ink); background: var(--surface); }
 .skeleton-row { display: grid; gap: 6px; padding: 10px; }
@@ -656,7 +664,11 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
   .endpoint .muted { display: none; }
   .login-card { padding: 28px 20px 20px; }
 }
-@media (hover: none) { .session-row.selected .row-actions { opacity: 1; pointer-events: auto; } .session-row.selected .s-time, .session-row.selected .s-status { visibility: hidden; } .msg-meta { opacity: 1; } }
+@media (hover: none), (pointer: coarse) {
+  .session-row.selected .row-actions { opacity: 1; pointer-events: auto; }
+  .session-row.selected .s-time, .session-row.selected .s-status { visibility: hidden; }
+  .msg-meta { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* ---- Codex App style turn: head, rule, process steps, answer, quiet actions ---- */

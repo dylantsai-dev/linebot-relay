@@ -20,7 +20,14 @@ function go(tab: TabId) {
   if (tab === 'logs') void refreshLogs()
   if (tab === 'users') void refreshUsers()
 }
-function open(key: string) { state.tab = 'sessions'; state.drawer = false; void selectSession(key) }
+function clearRowActionFocus() {
+  const el = document.activeElement as HTMLElement | null
+  if (el?.closest?.('.row-actions')) el.blur()
+}
+function open(key: string) {
+  clearRowActionFocus()
+  state.tab = 'sessions'; state.drawer = false; void selectSession(key)
+}
 
 /* ---- session search ---- */
 const query = ref(''), searchInput = ref<HTMLInputElement>()

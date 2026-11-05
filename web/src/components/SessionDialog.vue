@@ -12,13 +12,19 @@ const session = ref<Session | null>(null)
 const name = ref(''), preview = ref<string | null>(null), image = ref<Blob | null | undefined>(undefined)
 const busy = ref(false), error = ref('')
 
+function clearRowActionFocus() {
+  const el = document.activeElement as HTMLElement | null
+  if (el?.closest?.('.row-actions, .session-row')) el.blur()
+}
 function open(s: Session) {
   session.value = s; name.value = s.name || ''; error.value = ''
   if (preview.value?.startsWith('blob:')) URL.revokeObjectURL(preview.value)
   preview.value = s.avatar_url || null; image.value = undefined
+  clearRowActionFocus()
   dialog.value?.showModal()
   void nextTick(() => nameInput.value?.focus())
 }
+function onClose() { clearRowActionFocus() }
 defineExpose({ open })
 
 async function squareImage(file: File): Promise<Blob> {
@@ -63,7 +69,7 @@ async function save() {
 }
 </script>
 <template>
-  <dialog ref="dialog" class="dialog" @click.self="dialog?.close()">
+  <dialog ref="dialog" class="dialog" @close="onClose" @click.self="dialog?.close()">
     <form @submit.prevent="save">
       <div class="dialog-head">
         <h2>编辑会话</h2>
