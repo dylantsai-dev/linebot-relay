@@ -10,6 +10,9 @@ export interface Session {
   draft?: boolean
   name?: string
   avatar_url?: string
+  /** Admin paused it: webhook messages are rejected (423); the console still sends. */
+  paused?: boolean
+  paused_at?: string
 }
 export interface Attachment {
   name?: string

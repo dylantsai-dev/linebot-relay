@@ -954,6 +954,8 @@ const server = http.createServer(async (req, res) => {
       hookSessionKey = hookKey(hookMatch[1]);
       // Unknown id and wrong key answer the same, so ids cannot be probed.
       if (!hookSessionKey || !hookAuthorized(req, hookSessionKey)) { send(res, 401, { error: 'Unauthorized' }); record(401); return; }
+      // Paused by an admin: reject without reading the body; the sender can retry after it resumes.
+      if (sessions[hookSessionKey].paused) { body = { session: hookSessionKey }; send(res, 423, { error: '该会话已暂停接收', paused: true, session: hookSessionKey }); record(423, { error: '已暂停接收' }); return; }
     } else if (!(req.method === 'GET' && route === '/sessions') && !route.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); record(404); return; }
     if (req.method === 'GET' && route === '/api/auth/status') { send(res, 200, { needs_setup: !users.hasAdmin() }); return; }
     if (req.method === 'POST' && route === '/api/auth/login') {
@@ -1047,15 +1049,22 @@ const server = http.createServer(async (req, res) => {
           if (!sessions[key].hook || req.method === 'POST') { sessions[key].hook = newHook(sessions[key].hook?.id); persist(); }
           send(res, 200, { webhook: hookView(key) }); return;
         }
-        // Admin: rename a session (display name only; the key and the Codex thread stay the same).
+        // Admin: rename a session (display name only; the key and the Codex thread stay the same),
+        // and/or pause it: a paused session rejects webhook messages; the console still works.
         if (req.method === 'PATCH' && !match[2]) {
-          if (!principal.admin) throw failure('仅管理员可以重命名会话', 403);
+          if (!principal.admin) throw failure('仅管理员可以修改会话', 403);
           if (!sessions[key]) throw failure('会话不存在', 404);
           const input = await readJson(req);
-          if (typeof input.name !== 'string') throw failure('名称格式不正确', 400);
-          const name = input.name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
-          if (name.length > 60) throw failure('名称最多 60 个字符', 400);
-          if (name && name !== key) sessions[key].name = name; else delete sessions[key].name;
+          if (input.name === undefined && input.paused === undefined) throw failure('没有要修改的内容', 400);
+          if (input.name !== undefined && typeof input.name !== 'string') throw failure('名称格式不正确', 400);
+          if (input.paused !== undefined && typeof input.paused !== 'boolean') throw failure('paused 应为 true 或 false', 400);
+          if (input.name !== undefined) {
+            const name = input.name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+            if (name.length > 60) throw failure('名称最多 60 个字符', 400);
+            if (name && name !== key) sessions[key].name = name; else delete sessions[key].name;
+          }
+          if (input.paused === true && !sessions[key].paused) { sessions[key].paused = true; sessions[key].paused_at = new Date().toISOString(); }
+          if (input.paused === false) { delete sessions[key].paused; delete sessions[key].paused_at; }
           persist();
           send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return;
         }

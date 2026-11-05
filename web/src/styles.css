@@ -738,3 +738,14 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .wh-warn { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--red); min-width: 0; }
 .wh-warn .icon { flex: none; }
 @media (max-width: 560px) { .wh-row { grid-template-columns: 1fr; gap: 4px; } .wh-note { display: none; } .wh-actions { flex-wrap: wrap; } }
+
+/* ---------- receive (pause) toggle ---------- */
+.recv-toggle { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; transition: background-color .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease); }
+.recv-toggle:hover { background: var(--bg-hover); color: var(--ink); }
+.recv-toggle.static { cursor: default; }
+.recv-dot { width: 6px; height: 6px; border-radius: 50%; background: #2fa66a; box-shadow: 0 0 0 3px color-mix(in srgb, #2fa66a 16%, transparent); transition: background-color .15s var(--ease), box-shadow .15s var(--ease); }
+.recv-toggle.paused { color: var(--amber, #b7791f); border-color: color-mix(in srgb, #d69e2e 40%, var(--line)); background: color-mix(in srgb, #d69e2e 8%, transparent); }
+.recv-toggle.paused .recv-dot { background: #d69e2e; box-shadow: 0 0 0 3px color-mix(in srgb, #d69e2e 18%, transparent); }
+.s-paused { display: inline-grid; place-items: center; color: #d69e2e; }
+.wh-paused { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 9px 12px; border-radius: var(--r); font-size: 12.5px; color: #a8701a; background: color-mix(in srgb, #d69e2e 10%, transparent); }
+@media (max-width: 720px) { .recv-toggle span:last-child { display: none; } .recv-toggle { padding: 0 9px; } }

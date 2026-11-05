@@ -40,6 +40,7 @@ async function rotate() {
     </div>
     <p class="dialog-sub wh-sub"><SessionAvatar :session="session" :name="sessionName(session)" :src="session?.avatar_url" :size="16" /><span>向 <b>{{ sessionName(session) }}</b> 发送 HTTP 请求即可投递消息。地址和密钥只属于这个会话。</span></p>
 
+    <div v-if="session?.paused" class="wh-paused"><Icon name="pause" :size="14" />这个会话已暂停接收，Webhook 请求会返回 423「该会话已暂停接收」。</div>
     <div v-if="loading" class="wh-rows"><div v-for="i in 3" :key="i" class="wh-row"><span class="wh-label">&nbsp;</span><span class="wh-box wh-skel" /></div></div>
     <div v-else-if="hook" class="wh-rows">
       <div class="wh-row">

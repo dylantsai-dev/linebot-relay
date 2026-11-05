@@ -134,6 +134,17 @@ async function main() {
   assert.equal(rotated.path, hook1.path, 'URL survives a reset'); assert.notEqual(rotated.secret, hook1.secret);
   assert.equal((await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'old key' } })).status, 401, 'old key dies at once');
   assert.equal((await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'new key' } })).status, 200);
+  // Pause receiving: webhook messages are rejected with 423; the console still sends; only admins toggle.
+  assert.equal((await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { paused: 'yes' } })).status, 400);
+  const paused = await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { paused: true } });
+  assert.equal(paused.status, 200); assert.equal(paused.body.session.paused, true); assert.ok(paused.body.session.paused_at);
+  const refused = await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'while paused' } });
+  assert.equal(refused.status, 423); assert.equal(refused.body.error, '该会话已暂停接收'); assert.equal(refused.body.paused, true);
+  assert.equal((await call(hook1.secret, rotated.path, { method: 'POST', body: { message: 'bad key' } })).status, 401, 'auth is checked before pause');
+  assert.equal((await call(admin, '/api/send', { method: 'POST', body: { session: 's1', message: 'console while paused' } })).status, 200);
+  assert.ok((await call(admin, '/api/sessions')).body.sessions.find(s => s.key === 's1').paused);
+  assert.equal((await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { paused: false } })).body.session.paused, undefined);
+  assert.equal((await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'resumed' } })).status, 200);
   assert.equal(fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length, before, 'no thread was started');
   assert.ok(!JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))['never-linked']);
 
@@ -154,6 +165,7 @@ async function main() {
 
   const login = async (username, password) => (await call(null, '/api/auth/login', { method: 'POST', body: { username, password } })).body.token;
   const a = await login('alice', 'alice-pass-1'), b = await login('bob', 'bob-pass-12');
+  { const r = await call(a, '/api/sessions/s1', { method: 'PATCH', body: { paused: true } }); assert.equal(r.status, 403, 'only admins pause'); assert.equal(r.body.error, '仅管理员可以修改会话'); }
 
   // Normal user: only granted sessions, everywhere.
   const whoA = (await call(a, '/api/whoami')).body;

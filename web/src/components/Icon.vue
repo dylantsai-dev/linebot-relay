@@ -6,7 +6,7 @@ import {
   Menu, RefreshCw, Check, X, Ellipsis, MessagesSquare, CircleAlert, User, Pencil, Users, ShieldCheck, Ban, Lock, ChevronDown,
   Upload, Square, Navigation, Clock, PanelLeftClose, PanelLeftOpen, ScrollText, BookOpen, Webhook, Download, FileText,
   LoaderCircle, Inbox, Activity, Hash, LogIn, UserRoundPlus, ListOrdered, ChartNoAxesColumn, Braces, Settings2, Sparkles,
-  CornerDownLeft, Image, FileCode, FileArchive, MessageSquareDashed, Eye, EyeOff, UserCog, CornerUpRight, ListEnd,
+  CornerDownLeft, Image, FileCode, FileArchive, MessageSquareDashed, Eye, EyeOff, CirclePause, CirclePlay, UserCog, CornerUpRight, ListEnd,
 } from 'lucide-vue-next'
 
 const map: Record<string, Component> = {
@@ -18,7 +18,7 @@ const map: Record<string, Component> = {
   webhook: Webhook, download: Download, 'file-text': FileText, loader: LoaderCircle, inbox: Inbox, activity: Activity,
   hash: Hash, login: LogIn, 'user-plus': UserRoundPlus, queue: ListOrdered, stats: ChartNoAxesColumn, braces: Braces,
   settings: Settings2, sparkles: Sparkles, enter: CornerDownLeft, image: Image, 'file-code': FileCode,
-  'file-archive': FileArchive, empty: MessageSquareDashed, eye: Eye, 'eye-off': EyeOff, 'user-cog': UserCog, 'steer-to': CornerUpRight, 'list-end': ListEnd,
+  'file-archive': FileArchive, empty: MessageSquareDashed, eye: Eye, pause: CirclePause, play: CirclePlay, 'eye-off': EyeOff, 'user-cog': UserCog, 'steer-to': CornerUpRight, 'list-end': ListEnd,
 }
 const props = defineProps<{ name: string; size?: number; stroke?: number }>()
 const comp = computed(() => map[props.name] || map.more)

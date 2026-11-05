@@ -249,11 +249,17 @@ export function editSession(s: Session) { sessionEditor?.(s) }
 export function sessionName(s?: Session | null, key = '') { return s?.name || s?.key || key }
 function patchSession(updated: Session) {
   const i = state.sessions.findIndex(s => s.key === updated.key)
-  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url }
+  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url, paused: updated.paused, paused_at: updated.paused_at }
 }
 export async function renameSession(key: string, name: string) {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
   patchSession(data.session)
+}
+/** Admin: pause (webhook messages are rejected with 「已暂停接收」) or resume receiving. */
+export async function setSessionPaused(key: string, paused: boolean) {
+  const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ paused }) })
+  patchSession(data.session)
+  toast(paused ? '已暂停接收，Webhook 消息会被拒绝' : '已恢复接收', true)
 }
 export async function setSessionAvatar(key: string, image: Blob | null) {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}/avatar`, image ? { method: 'PUT', body: image } : { method: 'DELETE' })

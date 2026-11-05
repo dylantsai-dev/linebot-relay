@@ -4,7 +4,7 @@ import BrandMark from './BrandMark.vue'
 import Icon from './Icon.vue'
 import SessionAvatar from './SessionAvatar.vue'
 import {
-  editSession, openWebhook, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
+  editSession, openWebhook, setSessionPaused, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
   logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink,
 } from '../store'
 import { shortTime, time } from '../lib/format'
@@ -96,11 +96,13 @@ async function savePassword() {
               <SessionAvatar :session="s" :size="20" />
               <span class="s-key">{{ s.name || s.key }}</span>
               <span v-if="s.status === 'running' || s.status === 'queued'" class="s-spin" :title="statusText(s)" />
+              <span v-else-if="s.paused" class="s-paused" data-tip="已暂停接收" aria-label="已暂停接收"><Icon name="pause" :size="13" /></span>
               <span v-else class="s-time">{{ shortTime(s.updated_at) }}</span>
             </button>
             <div class="row-actions">
               <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="编辑名称和头像" :aria-label="`编辑 ${s.name || s.key}`" @click="editSession(s)"><Icon name="pencil" :size="13" /></button>
               <button v-if="s.codex_session_id" type="button" class="mini" data-tip="复制会话 ID" :aria-label="`复制 ${s.key} 的会话 ID`" @click="copy(s.codex_session_id)"><Icon name="copy" :size="13" /></button>
+              <button v-if="canCreate && !s.draft" type="button" class="mini" :data-tip="s.paused ? '恢复接收' : '暂停接收'" :aria-label="`${s.paused ? '恢复' : '暂停'}接收 ${s.name || s.key}`" @click="setSessionPaused(s.key, !s.paused).catch(e => toast(e.message))"><Icon :name="s.paused ? 'play' : 'pause'" :size="13" /></button>
               <button v-if="canCreate && !s.draft" type="button" class="mini" data-tip="Webhook" :aria-label="`${s.name || s.key} 的 Webhook`" aria-haspopup="dialog" @click="openWebhook(s)"><Icon name="webhook" :size="13" /></button>
             </div>
           </div>
