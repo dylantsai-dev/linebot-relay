@@ -10,15 +10,20 @@ const loading = ref(false)
 const error = ref('')
 const root = ref<HTMLElement | null>(null)
 const EFFORT: Record<string, string> = { none: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大', ultra: '超强' }
-const TIER: Record<string, string> = { fast: '快速', flex: '经济', priority: '快速', default: '标准', standard: '标准' }
+const TIER: Record<string, string> = { fast: '快速', flex: '经济', priority: '快速', default: '常速', standard: '常速' }
 const effortName = (id?: string | null) => id ? EFFORT[id] || id : ''
 const tierName = (id?: string | null, m?: ModelInfo) => id ? TIER[id] || m?.serviceTiers.find(t => t.id === id)?.name || id : ''
+const tierTip = (t: { id: string; description?: string }) => {
+  if (t.id === 'priority' || t.id === 'fast') return t.description || '更高速度，使用额度更高'
+  return t.description || undefined
+}
 const fallback = computed(() => models.value.find(m => m.isDefault))
 const current = computed(() => models.value.find(m => m.id === props.session.model) || (!props.session.model ? fallback.value : undefined))
 const label = computed(() => {
   const id = props.session.model
   const name = !id ? '默认' : models.value.find(m => m.id === id)?.displayName || id
-  const extra = [effortName(props.session.effort), tierName(props.session.service_tier, current.value)].filter(Boolean)
+  const speed = props.session.service_tier ? tierName(props.session.service_tier, current.value) : (current.value?.serviceTiers.length ? '常速' : '')
+  const extra = [effortName(props.session.effort), speed].filter(Boolean)
   return extra.length ? `${name} · ${extra.join(' · ')}` : name
 })
 function outside(e: MouseEvent) { if (root.value && !root.value.contains(e.target as Node)) close() }
@@ -75,8 +80,8 @@ onBeforeUnmount(close)
         <template v-if="current?.serviceTiers.length">
           <div class="model-sep" /><div class="model-head"><Icon name="zap" :size="13" />速度</div>
           <div class="model-chips">
-            <button class="model-chip" :class="{ on: !session.service_tier }" @click="chooseTier(null)">默认</button>
-            <button v-for="t in current.serviceTiers" :key="t.id" class="model-chip" :class="{ on: session.service_tier === t.id }" :data-tip="t.description || undefined" @click="chooseTier(t.id)">{{ tierName(t.id, current) }}</button>
+            <button class="model-chip" :class="{ on: !session.service_tier }" data-tip="默认速度，常规使用额度" @click="chooseTier(null)">常速</button>
+            <button v-for="t in current.serviceTiers" :key="t.id" class="model-chip" :class="{ on: session.service_tier === t.id }" :data-tip="tierTip(t)" @click="chooseTier(t.id)">{{ tierName(t.id, current) }}</button>
           </div>
         </template>
       </template>

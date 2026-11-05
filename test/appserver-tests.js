@@ -389,7 +389,7 @@ async function main() {
   { const c = await api('PATCH', '/api/sessions/images', { effort: null, service_tier: null }); assert.equal(c.body.session.effort, undefined); assert.equal(c.body.session.service_tier, undefined); }
   assert.equal((await api('PATCH', '/api/sessions/images', { model: null })).body.session.model, undefined);
   assert.equal((await post('images', 'no model')).status, 200);
-  { const p = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params; assert.equal(p.model, undefined); assert.equal(p.effort, undefined); assert.equal(p.serviceTier, undefined); }
+  { const p = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params; assert.equal(p.model, undefined); assert.equal(p.effort, undefined); assert.equal(p.serviceTier, null); }
   const uploadHistory = (await get('/api/sessions/images/history')).body;
   assert.equal(uploadHistory.source,'thread');
   assert.equal(uploadHistory.history[0].text,'请查看附件。');
