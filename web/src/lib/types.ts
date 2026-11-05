@@ -12,6 +12,8 @@ export interface Session {
   avatar_url?: string
   /** Admin paused it: webhook messages are rejected (423); the console still sends. */
   paused?: boolean
+  /** Admin-chosen model id for this session; unset means the default. */
+  model?: string
   paused_at?: string
 }
 export interface Attachment {
@@ -52,3 +54,5 @@ export interface PendingSend { message: string; attachments: DraftFile[]; starte
 export interface User { id: number; username: string; role: 'admin' | 'user'; disabled: boolean; created_at: string; updated_at: string; last_login_at: string | null; sessions: string[] }
 export interface Limits { max_file_bytes: number; max_files: number; max_total_bytes: number }
 export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; limits?: Limits; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }
+
+export interface ModelInfo { id: string; displayName: string; description: string; isDefault: boolean }

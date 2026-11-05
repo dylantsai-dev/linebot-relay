@@ -249,7 +249,7 @@ export function editSession(s: Session) { sessionEditor?.(s) }
 export function sessionName(s?: Session | null, key = '') { return s?.name || s?.key || key }
 function patchSession(updated: Session) {
   const i = state.sessions.findIndex(s => s.key === updated.key)
-  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url, paused: updated.paused, paused_at: updated.paused_at }
+  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url, paused: updated.paused, paused_at: updated.paused_at, model: updated.model }
 }
 export async function renameSession(key: string, name: string) {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
@@ -260,6 +260,21 @@ export async function setSessionPaused(key: string, paused: boolean) {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ paused }) })
   patchSession(data.session)
   toast(paused ? '已暂停接收，Webhook 消息会被拒绝' : '已恢复接收', true)
+}
+/** Admin: choose the model for this session (null = default). */
+export async function setSessionModel(key: string, model: string | null) {
+  const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ model }) })
+  patchSession(data.session)
+  toast('模型已切换', true)
+}
+let modelsAt = 0
+export const models = ref<import('./lib/types').ModelInfo[]>([])
+/** Admin: available models, cached for a minute. */
+export async function fetchModels(force = false) {
+  if (!force && models.value.length && Date.now() - modelsAt < 60000) return models.value
+  const data = await api<{ models: import('./lib/types').ModelInfo[] }>('/api/models')
+  models.value = data.models; modelsAt = Date.now()
+  return models.value
 }
 export async function setSessionAvatar(key: string, image: Blob | null) {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}/avatar`, image ? { method: 'PUT', body: image } : { method: 'DELETE' })

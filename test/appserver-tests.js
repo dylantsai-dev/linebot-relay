@@ -297,6 +297,19 @@ async function main() {
   assert.equal(fs.readFileSync(input[1].path).toString('hex'),image.toString('hex'));
   assert.ok(input[0].text.includes('[附件 · linebot-relay]'));
   assert.ok(input[0].text.includes('--- notes.txt ---\ninline text'));
+  // Per-session model: listed via model/list (hidden filtered, paginated) and passed on turn/start.
+  const listed = await api('GET', '/api/models');
+  assert.equal(listed.status, 200, JSON.stringify(listed));
+  assert.deepEqual(listed.body.models.map(m => m.id), ['m-a', 'm-b']);
+  assert.equal(listed.body.models[0].isDefault, true);
+  assert.equal((await api('PATCH', '/api/sessions/images', { model: '' })).status, 400);
+  const setModel = await api('PATCH', '/api/sessions/images', { model: 'm-b' });
+  assert.equal(setModel.status, 200); assert.equal(setModel.body.session.model, 'm-b');
+  assert.equal((await post('images', 'with model')).status, 200);
+  assert.equal(fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params.model, 'm-b');
+  assert.equal((await api('PATCH', '/api/sessions/images', { model: null })).body.session.model, undefined);
+  assert.equal((await post('images', 'no model')).status, 200);
+  assert.equal(fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params.model, undefined);
   const uploadHistory = (await get('/api/sessions/images/history')).body;
   assert.equal(uploadHistory.source,'thread');
   assert.equal(uploadHistory.history[0].text,'请查看附件。');

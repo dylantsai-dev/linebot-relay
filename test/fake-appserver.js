@@ -150,6 +150,10 @@ class FakeAppServer {
         this.lastList = params;
         respond({ data: [...this.threads.keys()].filter(id => !params?.searchTerm || (this.names?.get(id) || '').includes(params.searchTerm)).map(id => ({ id, name: this.names?.get(id) || null, preview: `preview ${id.slice(0, 4)}`, updatedAt: 1793810711, createdAt: 1793800000, cwd: '/tmp/fake-cwd', status: { type: 'idle' }, source: 'vscode', parentThreadId: null, ephemeral: false })), nextCursor: null });
         break;
+      case 'model/list':
+        if (!params?.cursor) respond({ data: [{ id: 'm-a', model: 'm-a', displayName: 'Model A', description: 'a', isDefault: true, hidden: false }, { id: 'm-h', displayName: 'Hidden', hidden: true }], nextCursor: 'p2' });
+        else respond({ data: [{ id: 'm-b', model: 'm-b', displayName: 'Model B', description: 'b', isDefault: false, hidden: false }], nextCursor: null });
+        break;
       default: send({ id, error: { code: -32601, message: 'unsupported fixture request' } });
     }
   }

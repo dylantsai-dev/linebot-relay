@@ -8,6 +8,7 @@ import { fileSize } from '../lib/format'
 import MessageItem from './MessageItem.vue'
 import LiveTurn from './LiveTurn.vue'
 import Icon from './Icon.vue'
+import ModelPicker from './ModelPicker.vue'
 
 const emit = defineEmits<{ delete: [] }>()
 const scroller = ref<HTMLElement>(), textarea = ref<HTMLTextAreaElement>(), fileInput = ref<HTMLInputElement>()
@@ -140,6 +141,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <span class="recv-dot" /><span>{{ selectedSession.paused ? '已暂停接收' : '接收中' }}</span>
         </button>
         <span v-else-if="selectedSession?.paused" class="recv-toggle paused static"><span class="recv-dot" /><span>已暂停接收</span></span>
+        <ModelPicker v-if="selectedSession && !selectedSession.draft" :session="selectedSession" :editable="isAdmin" />
         <span v-if="state.historySource === 'local'" class="src-pill" data-tip="ディランボット 三代目 未连接，显示本地记录">本地记录</span>
         <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="Webhook" aria-label="Webhook" aria-haspopup="dialog" @click="openWebhook(selectedSession)"><Icon name="webhook" /></button>
         <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="编辑名称和头像" aria-label="编辑会话" @click="editSession(selectedSession)"><Icon name="pencil" /></button>

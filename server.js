@@ -401,6 +401,20 @@ async function sessionListing() {
   }).sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
 }
 
+let modelCache = null;
+async function modelList() {
+  if (modelCache && Date.now() - modelCache.at < 60000) return modelCache.models;
+  if (!appserver || !fs.existsSync(appserverSocket)) throw failure('模型服务未连接，暂时无法获取模型列表', 503);
+  try {
+    await appserver.connect();
+    const models = (await appserver.listModels()).map(m => ({ id: m.id || m.model, displayName: m.displayName || m.id || m.model, description: m.description || '', isDefault: !!m.isDefault }));
+    modelCache = { at: Date.now(), models };
+    return models;
+  } catch (error) {
+    throw failure('获取模型列表失败：' + (error.message || '模型服务不可用'), 503);
+  }
+}
+
 async function runCodex(key, message, sessionId, input) {
   if (!appserver || !fs.existsSync(appserverSocket)) return runCodexExec(key, message, sessionId);
   let submitted = false;
@@ -412,7 +426,7 @@ async function runCodex(key, message, sessionId, input) {
     await appserver.subscribe(threadId);
     // Once sent, a lost response cannot prove the turn was not accepted.
     submitted = true;
-    const reply = await appserver.runTurn(threadId, input || message, config.timeout);
+    const reply = await appserver.runTurn(threadId, input || message, config.timeout, { model: sessions[key]?.model });
     return { session: key, codex_session_id: threadId, reply, transport: 'app-server' };
   } catch (error) {
     if (!submitted && error.appserverConnection) return runCodexExec(key, message, sessionId);
@@ -1002,6 +1016,10 @@ const server = http.createServer(async (req, res) => {
         if (!principal.admin) throw failure('Forbidden', 403);
         send(res, 200, await listCodexThreads(url)); return;
       }
+      if (req.method === 'GET' && route === '/api/models') {
+        if (!principal.admin) throw failure('仅管理员可以查看模型', 403);
+        send(res, 200, { models: await modelList() }); return;
+      }
       if (req.method === 'GET' && route === '/api/sessions') {
         const listing = await sessionListing();
         send(res, 200, { sessions: (visible ? listing.filter(s => visible.has(s.key)) : listing).map(s => publicSession(s, principal)) }); return;
@@ -1055,7 +1073,7 @@ const server = http.createServer(async (req, res) => {
           if (!principal.admin) throw failure('仅管理员可以修改会话', 403);
           if (!sessions[key]) throw failure('会话不存在', 404);
           const input = await readJson(req);
-          if (input.name === undefined && input.paused === undefined) throw failure('没有要修改的内容', 400);
+          if (input.name === undefined && input.paused === undefined && input.model === undefined) throw failure('没有要修改的内容', 400);
           if (input.name !== undefined && typeof input.name !== 'string') throw failure('名称格式不正确', 400);
           if (input.paused !== undefined && typeof input.paused !== 'boolean') throw failure('paused 应为 true 或 false', 400);
           if (input.name !== undefined) {
@@ -1063,6 +1081,8 @@ const server = http.createServer(async (req, res) => {
             if (name.length > 60) throw failure('名称最多 60 个字符', 400);
             if (name && name !== key) sessions[key].name = name; else delete sessions[key].name;
           }
+          if (input.model !== undefined && input.model !== null && (typeof input.model !== 'string' || !input.model.trim() || input.model.length > 120)) throw failure('模型格式不正确', 400);
+          if (input.model === null) delete sessions[key].model; else if (input.model !== undefined) sessions[key].model = input.model.trim();
           if (input.paused === true && !sessions[key].paused) { sessions[key].paused = true; sessions[key].paused_at = new Date().toISOString(); }
           if (input.paused === false) { delete sessions[key].paused; delete sessions[key].paused_at; }
           persist();
