@@ -215,10 +215,15 @@ function threadHistory(thread, local) {
       const { text, fullText, attachments } = parseUserContent(item);
       // The closest not-yet-matched relay entry: the same text may be sent again within minutes.
       const distance = entry => Math.abs(Date.parse(entry.time) - Date.parse(started));
+      // A steered message joins a turn that is already running: it lands inside [startedAt, completedAt], not near startedAt.
+      const turnEnd = turn.completedAt ? Date.parse(unixTime(turn.completedAt)) : Date.now();
+      const inTurn = entry => entry.mode === 'steer' && Date.parse(entry.time) >= Date.parse(started) - 5000 && Date.parse(entry.time) <= turnEnd + 5000;
       const match = local.filter(entry => entry.role === 'user' && !matchedUsers.has(entry) && (entry.text === text || entry.text === fullText || entry.text.trim() === text) &&
-        ['webhook', 'console'].includes(entry.source) && distance(entry) <= 180000).sort((a, b) => distance(a) - distance(b))[0];
+        ['webhook', 'console'].includes(entry.source) && (distance(entry) <= 180000 || inTurn(entry))).sort((a, b) => distance(a) - distance(b))[0];
       if (match) matchedUsers.add(match);
-      history.push({ role: 'user', text, time: started, source: match?.source || 'app', ...(attachments.length ? { attachments: attachments.map(file => ({ ...file, ...(match?.attachments?.find(localFile => localFile.path === file.path) || {}) })) } : match?.attachments?.length ? { attachments: match.attachments } : {}) });
+      // Steered messages keep the time they were steered in, so the console can match them to the relay's steered entry.
+      const userTime = match?.mode === 'steer' && match.time ? match.time : started;
+      history.push({ role: 'user', text, time: userTime, ...(match?.mode === 'steer' ? { mode: 'steer' } : {}), source: match?.source || 'app', ...(attachments.length ? { attachments: attachments.map(file => ({ ...file, ...(match?.attachments?.find(localFile => localFile.path === file.path) || {}) })) } : match?.attachments?.length ? { attachments: match.attachments } : {}) });
       // The thread is authoritative for a turn that reached it; drop relay-side timeouts/disconnect errors for it.
       if (match?.request_id) {
         for (const entry of local) if (entry.role === 'error' && entry.request_id === match.request_id) matchedErrors.add(entry);

@@ -45,12 +45,34 @@ const optimistic = computed<HistoryEntry | null>(() => {
   const echoed = state.history.some(e => e.role === 'user' && e.text === p.message && new Date(e.time || 0).getTime() >= p.started - 1000)
   return echoed ? null : { role: 'user', text: p.message, source: 'console', attachments: p.attachments.map(f => ({ name: f.name, size: f.size, kind: f.kind, preview: f.preview })) }
 })
+// A relay entry is already in the thread history when a user message with the same text shows up after it was
+// sent — or, for a steered entry, anywhere in the still-running turn: Codex stamps a steered message with the
+// turn's start time, which is earlier than the moment it was steered in.
+function echoedInHistory(e: { text: string; created_at: string; status: string }) {
+  const since = Date.parse(e.created_at) - 2000
+  const h = state.history
+  if (h.some(x => x.role === 'user' && x.text.trim() === e.text.trim() && new Date(x.time || 0).getTime() >= since)) return true
+  if (e.status !== 'steered') return false
+  let i = h.length - 1
+  while (i >= 0 && h[i].role !== 'assistant') i--
+  return h.slice(i + 1).some(x => x.role === 'user' && x.text.trim() === e.text.trim())
+}
 // Running / steered relay entries the thread history has not echoed yet (e.g. right after a refresh).
 const inflight = computed<{ id: string; entry: HistoryEntry; steered: boolean }[]>(() => state.queue
   .filter(e => e.status !== 'queued')
-  .filter(e => !state.history.some(h => h.role === 'user' && h.text === e.text && new Date(h.time || 0).getTime() >= Date.parse(e.created_at) - 2000))
+  .filter(e => !echoedInHistory(e))
   .filter(e => !(pending.value && pending.value.message === e.text))
   .map(e => ({ id: e.id, steered: e.status === 'steered', entry: { role: 'user' as const, text: e.text, source: e.source, time: e.created_at, attachments: e.attachments } })))
+// Steered messages the thread already echoed: tag them in place (once) while their turn is still running.
+const steeredKeys = computed(() => {
+  const keys = new Set<string>()
+  if (!liveShown.value) return keys
+  const list = items.value
+  for (let i = list.length - 1; i >= 0 && list[i].entry.role !== 'assistant'; i--) {
+    if (list[i].entry.role === 'user' && list[i].entry.mode === 'steer') keys.add(list[i].key)
+  }
+  return keys
+})
 const elapsed = computed(() => (pending.value ? Math.max(0, Math.floor((state.now - pending.value.started) / 1000)) : 0))
 // One placeholder for the whole turn (thinking -> working -> answer) so nothing swaps or remounts.
 // threadRunning comes from the stream/history (authoritative); the sessions poll lags and would
@@ -210,7 +232,13 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
             <template v-if="state.loadingOlder"><Icon name="loader" :size="12" class="spin" />加载更早的消息…</template>
             <button v-else type="button" @click="loadOlder"><Icon name="chevron-up" :size="12" /> 加载更早的消息</button>
           </div>
-          <MessageItem v-for="item in items" :key="item.key" :entry="item.entry" />
+          <template v-for="item in items" :key="item.key">
+            <div v-if="steeredKeys.has(item.key)" class="inflight steered">
+              <MessageItem :entry="item.entry" />
+              <span class="inflight-tag"><Icon name="steer" :size="11" />已引导到当前回合</span>
+            </div>
+            <MessageItem v-else :entry="item.entry" />
+          </template>
           <div v-for="f in inflight" :key="'q-' + f.id" class="inflight" :class="{ steered: f.steered }">
             <MessageItem :entry="f.entry" :optimistic="!f.steered" />
             <span v-if="f.steered" class="inflight-tag"><Icon name="steer" :size="11" />已引导到当前回合</span>

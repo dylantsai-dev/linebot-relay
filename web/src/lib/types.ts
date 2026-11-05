@@ -42,6 +42,8 @@ export interface HistoryEntry {
   images?: MediaImage[]
   /** The turn's process (commentary, commands, edits, searches, tools) in order. */
   steps?: LiveItem[]
+  /** A user message steered into a running turn (引导). */
+  mode?: 'steer'
 }
 export interface MediaImage { name: string; kind?: 'image'; url: string; source?: 'generated' | 'view' | 'tool'; prompt?: string }
 export type LiveKind = 'text' | 'reasoning' | 'plan' | 'command' | 'tool' | 'search' | 'file' | 'image' | 'other'
