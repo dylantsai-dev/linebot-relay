@@ -52,7 +52,7 @@ const withCopy = computed(() => html.value.replaceAll('<div class="code-block">'
       <AttachmentList v-if="entry.attachments?.length" :files="entry.attachments" />
       <div class="msg-actions">
         <button v-if="entry.role !== 'error' && entry.text" type="button" class="act-btn" :data-tip="copied ? '已复制' : '复制'" aria-label="复制消息" @click="copyText"><Icon :name="copied ? 'check' : 'copy'" :size="14" :stroke="1.6" /></button>
-        <span class="act-meta">{{ optimistic ? '发送中…' : entry.time ? time(entry.time).slice(11, 16) : '' }}</span>
+        <span class="act-meta">{{ entry.time && !optimistic ? time(entry.time).slice(11, 16) : '' }}</span>
       </div>
     </div>
   </article>

@@ -53,7 +53,16 @@ const elapsed = computed(() => (pending.value ? Math.max(0, Math.floor((state.no
 // threadRunning comes from the stream/history (authoritative); the sessions poll lags and would
 // otherwise re-show a 思考中 placeholder under the finished answer for a few seconds.
 const liveShown = computed(() => !!pending.value || !!state.live || state.threadRunning || state.queue.some(e => e.status === 'running'))
-const liveElapsed = computed(() => (state.live?.startedAt ? Math.max(0, Math.floor((state.now - Date.parse(state.live.startedAt)) / 1000)) : undefined))
+// One clock for the whole turn: from the send click (or the relay's start) until Codex reports its own start,
+// so the 「正在思考 N秒」 head never drops its number while the request is being accepted.
+const turnStart = ref(0)
+watch(() => pending.value?.started, t => { if (t) turnStart.value = t })
+watch(liveShown, shown => { if (!shown) turnStart.value = 0 })
+const liveElapsed = computed(() => {
+  const running = state.queue.find(e => e.status === 'running')
+  const start = state.live?.startedAt ? Date.parse(state.live.startedAt) : turnStart.value || (running ? Date.parse(running.started_at || running.created_at) : 0)
+  return start ? Math.max(0, Math.floor((state.now - start) / 1000)) : undefined
+})
 
 /* ---- scroll: stick to bottom only when already near it; never jump otherwise ---- */
 let stick = true
@@ -111,7 +120,7 @@ const menuAnchor = ref<HTMLElement | null>(null)
 function toggleCopyMenu(e: MouseEvent) { const el = e.currentTarget as HTMLElement; menuAnchor.value = menuAnchor.value === el ? null : el }
 function closeCopyMenu(focus: boolean) { const a = menuAnchor.value; menuAnchor.value = null; if (focus) a?.focus({ preventScroll: true }) }
 // Codex-style: while a turn runs and nothing is typed, the send button becomes the stop button.
-const canStop = computed(() => busy.value && !selectedSession.value?.draft && !pending.value && !text.value.trim() && !drafts.value.length)
+const canStop = computed(() => (busy.value || !!pending.value) && !selectedSession.value?.draft && !text.value.trim() && !drafts.value.length)
 const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (Enter)')
 </script>
 <template>
@@ -164,7 +173,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
             <span v-if="f.steered" class="inflight-tag"><Icon name="steer" :size="11" />已引导到当前回合</span>
           </div>
           <MessageItem v-if="optimistic" key="__optimistic" :entry="optimistic" optimistic />
-          <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="pending ? elapsed : liveElapsed" />
+          <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="liveElapsed" />
         </template>
       </div>
     </div>
@@ -191,14 +200,14 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
             <button type="button" class="chip-x" :aria-label="`移除 ${f.name}`" data-tip="移除" @click="removeFile(state.selected, f.id)"><Icon name="x" :size="12" /></button>
           </span>
         </TransitionGroup>
-        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" :placeholder="busy ? '排队，当前回合结束后发送…' : '给 Codex 发消息…'" @input="grow" @keydown="onKey" />
+        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" placeholder="给 Codex 发消息…" @input="grow" @keydown="onKey" />
         <div class="composer-tools">
           <input ref="fileInput" type="file" multiple hidden @change="onPick">
           <button type="button" class="tool-btn" :data-tip="`添加附件 · 任意类型，最多 ${limits.files} 个，每个 ≤ ${fileSize(limits.fileBytes)}`" aria-label="添加附件" :disabled="drafts.length >= limits.files" @click="fileInput?.click()"><Icon name="plus" :size="17" /></button>
           <span v-if="drafts.length" class="tool-count">{{ drafts.length }}/{{ limits.files }}</span>
           <span class="spacer" />
-          <button v-if="canStop" type="button" class="send stop" :data-tip="state.stopping ? '正在停止…' : '停止当前回合'" aria-label="停止当前回合" :disabled="state.stopping" @click="stopTurn"><span v-if="state.stopping" class="spinner sm" /><span v-else class="stop-square" /></button>
-          <button v-else class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else name="send" :size="16" :stroke="2.2" /></button>
+          <button v-if="canStop" key="stop" type="button" class="send stop" :data-tip="state.stopping ? '正在停止…' : '停止当前回合'" aria-label="停止当前回合" :disabled="state.stopping" @click="pending || stopTurn()"><span class="stop-square" /></button>
+          <button v-else key="send" class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!text.trim() && !drafts.length"><Icon name="send" :size="16" :stroke="2.2" /></button>
         </div>
       </div>
     </form>
