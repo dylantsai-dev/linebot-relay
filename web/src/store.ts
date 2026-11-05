@@ -33,7 +33,7 @@ export const state = reactive({
   /** In-progress turn of the selected session (streamed deltas, or the history snapshot as fallback). */
   live: null as LiveTurn | null,
   streaming: false,
-  lightbox: null as { src: string; alt: string } | null,
+  lightbox: null as { src: string; alt: string; items?: { src: string; alt: string }[]; index?: number } | null,
   /** Relay queue of the selected session (steered / running / queued messages). */
   queue: [] as QueueEntry[],
   /** Send mode while a turn is running: 排队 (default) or 引导. */

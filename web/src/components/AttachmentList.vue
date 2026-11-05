@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { reactive, watchEffect } from 'vue'
+import { computed, reactive, watchEffect } from 'vue'
 import type { Attachment } from '../lib/types'
-import { attachmentBlob, toast, state } from '../store'
+import { attachmentBlob, toast } from '../store'
 import { fileSize } from '../lib/format'
 import Icon from './Icon.vue'
+import ImageStack from './ImageStack.vue'
 
 const props = defineProps<{ files: Attachment[] }>()
 const urls = reactive<Record<number, string>>({}), failed = reactive<Record<number, boolean>>({})
@@ -26,15 +27,26 @@ async function download(file: Attachment) {
     const a = document.createElement('a'); a.href = url; a.download = file.name || 'attachment'; document.body.append(a); a.click(); a.remove()
   } catch (e) { toast((e as Error).message) }
 }
+
+const imageEntries = computed(() => props.files
+  .map((file, i) => ({ file, i }))
+  .filter(({ file }) => file.kind === 'image'))
+const otherEntries = computed(() => props.files
+  .map((file, i) => ({ file, i }))
+  .filter(({ file }) => file.kind !== 'image'))
+const stackImages = computed(() => imageEntries.value
+  .filter(({ i }) => !!urls[i])
+  .map(({ file, i }) => ({ src: urls[i], alt: file.name || '图片', title: file.name })))
+const pendingImages = computed(() => imageEntries.value.filter(({ i }) => !urls[i]))
 </script>
 <template>
   <div class="attachments">
-    <template v-for="(file, i) in files" :key="i">
-      <a v-if="file.kind === 'image'" class="att-image" :href="urls[i] || undefined" target="_blank" rel="noopener noreferrer" :title="file.name" @click="urls[i] && ($event.preventDefault(), state.lightbox = { src: urls[i], alt: file.name || '图片' })">
-        <img v-if="urls[i]" :src="urls[i]" :alt="file.name || '图片'" loading="lazy" referrerpolicy="no-referrer">
-        <span v-else class="att-placeholder">{{ failed[i] ? `${file.name || '图片'}（读取失败）` : file.name || '图片' }}</span>
-      </a>
-      <a v-else-if="signedFile(file)" class="chip" :href="signedFile(file)" :download="file.name || 'attachment'" :title="`下载 ${file.name || '附件'}`">
+    <ImageStack v-if="stackImages.length" :images="stackImages" />
+    <template v-for="({ file, i }) in pendingImages" :key="'pending-' + i">
+      <span class="att-placeholder">{{ failed[i] ? `${file.name || '图片'}（读取失败）` : file.name || '图片' }}</span>
+    </template>
+    <template v-for="({ file, i }) in otherEntries" :key="'file-' + i">
+      <a v-if="signedFile(file)" class="chip" :href="signedFile(file)" :download="file.name || 'attachment'" :title="`下载 ${file.name || '附件'}`">
         <span class="chip-icon"><Icon :name="fileIcon(file.name)" :size="15" /></span><span class="chip-text"><span class="chip-name">{{ file.name || '附件' }}</span><span class="chip-size">{{ fileSize(file.size) }}</span></span><Icon name="download" :size="14" class="chip-dl" />
       </a>
       <button v-else type="button" class="chip" :disabled="!file.path && !file.preview" @click="download(file)">
