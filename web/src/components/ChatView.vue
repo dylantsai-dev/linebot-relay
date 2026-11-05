@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast, loadOlder } from '../store'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast, loadOlder, addToAgentsMd } from '../store'
 import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
@@ -8,6 +8,8 @@ import { fileSize } from '../lib/format'
 import MessageItem from './MessageItem.vue'
 import LiveTurn from './LiveTurn.vue'
 import PromptCard from './PromptCard.vue'
+import AnnotationCard from './AnnotationCard.vue'
+import type { AnnotationItem } from './AnnotationCard.vue'
 import Icon from './Icon.vue'
 import ModelPicker from './ModelPicker.vue'
 import AccessPicker from './AccessPicker.vue'
@@ -18,6 +20,62 @@ const textDrafts = new Map<string, string>()
 const text = ref('')
 const dragging = ref(false)
 let dragDepth = 0
+
+/* ---- response annotations: select assistant text → review card → 加到 Agent.md ---- */
+const annotations = ref<AnnotationItem[]>([])
+const annoBusy = ref(false)
+function clearAnnotations() { annotations.value = []; window.getSelection()?.removeAllRanges() }
+function removeAnnotation(id: string) {
+  annotations.value = annotations.value.filter(a => a.id !== id)
+  if (!annotations.value.length) window.getSelection()?.removeAllRanges()
+}
+function offsetsIn(source: string, selected: string): { start: number; end: number } | null {
+  if (!selected) return null
+  const start = source.indexOf(selected)
+  if (start < 0) return null
+  return { start, end: start + selected.length }
+}
+function captureSelection() {
+  if (annoBusy.value) return
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return
+  const text = sel.toString().replace(/\u00a0/g, ' ').trim()
+  if (!text || text.length < 2) return
+  const range = sel.getRangeAt(0)
+  const node = range.commonAncestorContainer
+  const el = (node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement)
+  const body = el?.closest?.('.msg.assistant .msg-body[data-anno-source]') as HTMLElement | null
+  if (!body) return
+  const article = body.closest('.msg.assistant') as HTMLElement | null
+  if (!article || article.closest('.live-turn')) return
+  const messageId = article.getAttribute('data-message-id')
+  // Prefer the plain-text source from history when the selection still matches it.
+  const entry = state.history.find(e => e.role === 'assistant' && e.message_id && e.message_id === messageId)
+    || state.history.find(e => e.role === 'assistant' && e.text.includes(text))
+  const source = entry?.text || text
+  const off = offsetsIn(source, text)
+  const id = `${messageId || 'local'}:${off?.start ?? 0}:${off?.end ?? text.length}:${text.slice(0, 24)}`
+  if (annotations.value.some(a => a.id === id || a.text === text)) return
+  annotations.value = [...annotations.value, {
+    id,
+    text,
+    messageId: messageId || entry?.message_id || null,
+    startOffset: off?.start ?? null,
+    endOffset: off?.end ?? null,
+  }]
+}
+function onDocMouseUp() { window.setTimeout(captureSelection, 0) }
+async function commitAnnotations() {
+  if (!annotations.value.length || annoBusy.value) return
+  annoBusy.value = true
+  const payload = annotations.value.map(a => ({ text: a.text, messageId: a.messageId, startOffset: a.startOffset, endOffset: a.endOffset }))
+  const ok = await addToAgentsMd(payload)
+  annoBusy.value = false
+  if (ok) clearAnnotations()
+}
+onMounted(() => document.addEventListener('mouseup', onDocMouseUp))
+onBeforeUnmount(() => document.removeEventListener('mouseup', onDocMouseUp))
+watch(() => state.selected, () => clearAnnotations())
 
 const pending = computed(() => state.pending.get(state.selected))
 const drafts = computed(() => state.attachments.get(state.selected) || [])
@@ -251,6 +309,11 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
       </Transition>
     </div>
 
+    <Transition name="fade">
+      <div v-if="state.selected && annotations.length" class="anno-dock">
+        <AnnotationCard :items="annotations" :submitting="annoBusy" @add="commitAnnotations" @dismiss="clearAnnotations" @remove="removeAnnotation" />
+      </div>
+    </Transition>
     <form v-if="state.selected" class="composer" @submit.prevent="submit" @paste="onPaste">
       <TransitionGroup v-if="queued.length" tag="ul" name="list" class="queue-stack" aria-label="排队中的消息">
         <li v-for="(q, i) in queued" :key="q.id" class="queue-card" :title="queueTitle(q)">

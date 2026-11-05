@@ -507,6 +507,26 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .t-badge .dot { width: 5px; height: 5px; box-shadow: none; }
 .picker-more { display: flex; margin: 8px auto 4px; }
 
+
+/* ---------- response annotation review card (选中助手回复 → 加到 Agent.md) ---------- */
+.anno-dock { flex: none; width: 100%; max-width: calc(var(--col) + 48px); margin: 0 auto; padding: 0 24px 10px; }
+.anno-card { position: relative; padding: 14px 14px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-pop); animation: prompt-in .2s ease-out; }
+.anno-close { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; }
+.anno-close:hover { background: var(--bg-hover); color: var(--ink); }
+.anno-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: min(36vh, 260px); overflow: auto; }
+.anno-item { position: relative; padding-right: 18px; }
+.anno-label { font-size: 12.5px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+.anno-text { padding: 10px 12px; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--line); color: var(--ink-2); font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow: auto; }
+.anno-remove { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
+.anno-remove:hover { color: var(--red); background: var(--red-soft); }
+.anno-badge { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px auto 0; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-muted); color: var(--muted); font-size: 12px; width: fit-content; }
+.anno-action { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 12px; height: 40px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg-subtle); color: var(--ink); font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
+.anno-action:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.anno-action:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 767px) {
+  .anno-dock { padding: 0 10px 8px; }
+}
+
 /* ---------- toast & lightbox ---------- */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 150; display: flex; align-items: center; gap: 9px; max-width: min(90vw, 480px); padding: 10px 16px; border-radius: 12px; background: var(--ink); color: var(--bg); font-size: 13px; box-shadow: var(--shadow-pop); }
 .lightbox { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 56px 24px 24px; background: rgba(20, 19, 17, .82); backdrop-filter: blur(4px); cursor: zoom-out; }

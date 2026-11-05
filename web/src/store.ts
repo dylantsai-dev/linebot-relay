@@ -512,6 +512,26 @@ function setQueue(queue: QueueEntry[]) {
  * Messages are accepted asynchronously (202): the relay queues them behind the running turn (排队)
  * or steers them into it (引导, turn/steer). Progress then arrives over the stream and history.
  */
+export async function addToAgentsMd(annotations: { text: string; messageId?: string | null; startOffset?: number | null; endOffset?: number | null }[], comment = ''): Promise<{ path: string } | null> {
+  const key = state.selected
+  if (!key || !annotations.length) return null
+  try {
+    const data = await api<{ ok: true; path: string; results?: { appended: boolean; duplicate?: boolean }[] }>(`/api/sessions/${keyPath(key)}/agents-md`, {
+      method: 'POST',
+      body: JSON.stringify({
+        annotations: annotations.map(a => ({ text: a.text, messageId: a.messageId || undefined, startOffset: a.startOffset ?? undefined, endOffset: a.endOffset ?? undefined })),
+        comment: comment || undefined,
+      }),
+    })
+    const dup = data.results?.length && data.results.every(r => r.duplicate)
+    toast(dup ? 'Agent.md 里已有相同内容' : '已加到 Agent.md', true)
+    return { path: data.path }
+  } catch (error) {
+    toast((error as Error).message)
+    return null
+  }
+}
+
 export async function sendMessage(text: string, mode: SendMode = 'queue'): Promise<boolean> {
   const key = state.selected
   const files = state.attachments.get(key) || []

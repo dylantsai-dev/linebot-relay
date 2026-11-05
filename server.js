@@ -13,6 +13,7 @@ const { Users } = require('./lib/users');
 const { Settings } = require('./lib/settings');
 const feishu = require('./lib/feishu');
 const { Media, rewriteMarkdown, itemImages, localPath } = require('./lib/media');
+const { appendInstruction } = require('./lib/agents-md');
 
 function positiveInteger(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -235,7 +236,7 @@ function threadHistory(thread, local) {
       const before = history.length;
       const answers = finals.length ? finals : agents.slice(-1);
       for (const item of answers) {
-        history.push({ role: 'assistant', text: item.text || '', time, duration_ms: turn.durationMs ?? undefined, codex_session_id: thread.id });
+        history.push({ role: 'assistant', text: item.text || '', time, duration_ms: turn.durationMs ?? undefined, codex_session_id: thread.id, message_id: item.id || null });
       }
       // The turn's process as Codex App shows it: commentary, commands, edits, searches, tool calls.
       const steps = turnSteps(items, new Set(answers));
@@ -1286,7 +1287,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/users|\/prompts\/[A-Za-z0-9_-]{1,64}|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/users|\/agents-md|\/prompts\/[A-Za-z0-9_-]{1,64}|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
       if (match) {
         let key;
         try {
@@ -1382,6 +1383,38 @@ const server = http.createServer(async (req, res) => {
           send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return;
         }
         if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
+        // Append selected assistant text to the thread cwd's AGENTS.md / Agent.md (Codex project guidance).
+        if (req.method === 'POST' && match[2] === '/agents-md') {
+          if (!sessions[key]?.codex_session_id) throw failure('会话未关联，无法定位工作目录', 409);
+          const input = await readJson(req, 64 * 1024);
+          const texts = Array.isArray(input.annotations)
+            ? input.annotations.map(a => (typeof a === 'string' ? a : a?.text)).filter(t => typeof t === 'string' && t.trim())
+            : (typeof input.text === 'string' ? [input.text] : []);
+          if (!texts.length) throw failure('请选择要添加的文本', 400);
+          const comment = typeof input.comment === 'string' ? input.comment : '';
+          let thread = cachedThread(key);
+          if ((!thread?.cwd) && appserver) {
+            try {
+              const cache = await appserver.readThread(sessions[key].codex_session_id, 0, { includeTurns: false });
+              thread = cache?.thread || thread;
+            } catch { /* keep cached */ }
+          }
+          const cwd = typeof thread?.cwd === 'string' ? thread.cwd : null;
+          const results = [];
+          for (const text of texts) {
+            results.push(appendInstruction({
+              cwd,
+              codexHome: config.codexHome,
+              text,
+              comment,
+              meta: { when: new Date().toISOString(), user: principal.user?.username || null, session: key },
+            }));
+          }
+          const last = results.at(-1);
+          log({ request_id: requestId, event: 'agents_md_append', session: key, path: last?.path, count: results.length, user: principal.user?.username || null, status: 200, duration: Date.now() - started });
+          send(res, 200, { ok: true, path: last.path, cwd: last.cwd || cwd, results: results.map(r => ({ path: r.path, appended: r.appended, duplicate: !!r.duplicate, created: !!r.created })) });
+          return;
+        }
         if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 50, 550), principal, beforeOf(url))); return; }
         // Answer an approval / question card: { decision } or { answers: { questionId: string | string[] } }.
         if (req.method === 'POST' && match[2]?.startsWith('/prompts/')) {

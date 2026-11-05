@@ -41,7 +41,7 @@ const withCopy = computed(() => {
 })
 </script>
 <template>
-  <article class="msg" :class="[entry.role, { optimistic }]">
+  <article class="msg" :class="[entry.role, { optimistic }]" :data-role="entry.role" :data-message-id="entry.message_id || undefined">
     <div class="msg-main">
       <template v-if="entry.role === 'assistant' && (worked || steps.length)">
         <button type="button" class="turn-head" :disabled="!steps.length" :aria-expanded="open" @click="open = !open">
@@ -50,7 +50,7 @@ const withCopy = computed(() => {
         <div class="turn-rule" />
         <div class="turn-steps" :class="{ open: open && steps.length }"><div><TurnSteps v-if="steps.length" :steps="steps" /></div></div>
       </template>
-      <div v-if="entry.text" class="msg-body" :class="{ md: entry.role === 'assistant' }" @click="onClick" v-html="withCopy" />
+      <div v-if="entry.text" class="msg-body" :class="{ md: entry.role === 'assistant' }" data-anno-source="1" @click="onClick" v-html="withCopy" />
       <div v-if="entry.images?.length" class="gen-images">
         <button v-for="(img, i) in entry.images" :key="img.url" type="button" class="gen-image" :title="img.prompt || img.name" @click="state.lightbox = { src: img.url, alt: img.prompt || img.name || `图片 ${i + 1}` }">
           <img :src="img.url" :alt="img.prompt || img.name || '图片'" loading="lazy" decoding="async" referrerpolicy="no-referrer">
