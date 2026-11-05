@@ -415,9 +415,11 @@ function onStreamEvent(key: string, name: string, data: any) {
       void refreshHistory(key).catch(() => {})
     }
     else {
-      setLive(null)
+      // Keep the live answer on screen until the final message is in history: swapping in the same
+      // tick avoids the blank gap + fade-in flash at the end of a turn.
+      const ended = liveBuf
       historySig = ''
-      void refreshHistory(key).catch(() => {})
+      void refreshHistory(key).catch(() => {}).finally(() => { if (state.selected === key && liveBuf === ended) setLive(null) })
       void refreshSessions().catch(() => {})
     }
   } else if (name === 'queue') {

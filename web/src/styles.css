@@ -267,7 +267,8 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 .messages-inner { max-width: calc(var(--col) + 48px); margin: 0 auto; padding: 12px 24px 32px; display: flex; flex-direction: column; gap: 26px; }
 
 /* messages */
-.msg { display: flex; gap: 14px; min-width: 0; animation: msg-in .25s var(--ease); }
+.msg { display: flex; gap: 14px; min-width: 0; }
+.msg.user.optimistic { animation: msg-in .25s var(--ease); }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
 .msg-avatar { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; margin-top: 1px; color: var(--accent); }
 .msg-avatar.error { color: var(--red); background: var(--red-soft); }
@@ -328,7 +329,10 @@ button.id-pill:hover { background: var(--bg-hover); color: var(--ink); }
 .md input[type=checkbox] { margin: 0 6px 0 0; vertical-align: -1px; accent-color: var(--accent); }
 .md li:has(> input[type=checkbox]) { list-style: none; margin-left: -18px; }
 .md img.md-img { display: block; max-width: min(100%, 380px); max-height: 340px; height: auto; margin: 6px 0 12px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-muted); cursor: zoom-in; object-fit: contain; }
-.md.streaming > :last-child::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px; vertical-align: 1px; background: var(--accent); border-radius: 50%; animation: blink 1s ease-in-out infinite; }
+.md-block { display: contents; }
+.md > .md-block:first-child > :first-child { margin-top: 0; }
+.md > .md-block:last-child > :last-child { margin-bottom: 0; }
+.md.streaming > .md-block:last-child > :last-child::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px; vertical-align: 1px; background: var(--accent); border-radius: 50%; }
 @keyframes blink { 50% { opacity: .2; } }
 
 /* attachments & chips */

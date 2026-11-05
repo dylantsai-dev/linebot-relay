@@ -54,3 +54,18 @@ export function renderMarkdown(text: string, live = false): string {
   cache.set(text, html)
   return html
 }
+
+// Split streaming markdown into top-level blocks (blank-line separated, code fences kept whole).
+// Finished blocks render once (cached) so their DOM is never replaced; only the tail block changes.
+export function splitBlocks(text: string): string[] {
+  const out: string[] = []
+  let cur: string[] = [], fence = ''
+  for (const line of text.split('\n')) {
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
+    if (m) { if (!fence) fence = m[1][0]; else if (m[1][0] === fence) fence = '' }
+    if (!fence && !m && line.trim() === '' && cur.length) { out.push(cur.join('\n')); cur = []; continue }
+    cur.push(line)
+  }
+  if (cur.length) out.push(cur.join('\n'))
+  return out.filter(b => b.trim())
+}
