@@ -871,6 +871,38 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .prompt-actions .spacer { flex: 1; }
 .btn.prompt-stop { margin-left: auto; }
 .btn.prompt-stop:hover:not(:disabled) { color: var(--red); background: var(--red-soft); }
+/* 问题 card (agent questions): pager, option rows, always-open reply box, 跳过 / 下一步 */
+.prompt-card.kind-input .prompt-ico { background: none; color: var(--muted); width: 18px; }
+.prompt-card.kind-input .prompt-head strong { font-weight: 500; color: var(--muted); }
+.prompt-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 12px; }
+.prompt-count { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+.prompt-nav-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.prompt-nav-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--ink); }
+.prompt-nav-btn:disabled { opacity: .35; cursor: default; }
+.prompt-nav-btn.prev svg { transform: rotate(90deg); }
+.prompt-nav-btn.next svg { transform: rotate(-90deg); }
+.prompt-card.kind-input .prompt-q { margin-top: 8px; }
+.prompt-card.kind-input .prompt-q-head { text-transform: none; letter-spacing: 0; margin-bottom: 2px; }
+.prompt-card.kind-input .prompt-q-text { font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.prompt-opts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.prompt-opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.prompt-opt:hover:not(:disabled) { background: var(--bg-hover); }
+.prompt-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.prompt-opt:disabled { opacity: .55; cursor: not-allowed; }
+.prompt-opt-n { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--bg-muted); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.prompt-opt.on .prompt-opt-n { background: var(--accent); color: var(--accent-ink); }
+.btn.pill.ghost { border-color: var(--line-strong); color: var(--ink-2); }
+.prompt-opt-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.prompt-opt-label { font-size: 13px; overflow-wrap: anywhere; }
+.prompt-opt-sub { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.prompt-opt-check { flex: none; color: var(--accent); }
+.prompt-reply { margin-top: 12px; }
+.prompt-reply-box { display: block; width: 100%; min-height: 44px; max-height: 200px; padding: 11px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-lg, 12px); background: var(--bg-subtle, var(--surface)); color: var(--ink); font: inherit; font-size: 13.5px; line-height: 1.5; resize: none; outline: 0; overflow-y: auto; }
+.prompt-reply-box::placeholder { color: var(--faint, var(--muted)); }
+.prompt-reply-box:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.prompt-actions.end { justify-content: flex-end; }
+.btn.pill { border-radius: 999px; padding-inline: 14px; }
+
 
 /* ---------- older history (scroll to top) ---------- */
 .older-row { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; margin-bottom: 4px; font-size: 12px; color: var(--faint); }

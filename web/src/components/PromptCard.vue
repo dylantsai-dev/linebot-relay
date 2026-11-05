@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // An approval / question the running turn is waiting on (Codex-App style card in the message flow).
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import type { Prompt, PromptDecision } from '../lib/types'
 import { answerPrompt } from '../store'
 import Icon from './Icon.vue'
@@ -9,21 +9,23 @@ const props = defineProps<{ prompt: Prompt }>()
 const submitting = ref<string>('')
 const picked = reactive<Record<string, string>>({})
 const typed = reactive<Record<string, string>>({})
+const skipped = reactive<Record<string, boolean>>({})
+const step = ref(0)
+const reply = ref<HTMLTextAreaElement | null>(null)
 
 const icon = computed(() => ({ command: 'terminal', file: 'file-code', input: 'help', permissions: 'shield-alert' })[props.prompt.kind] || 'shield')
 const labels: Record<PromptDecision, string> = { accept: '允许', acceptForSession: '本会话允许', decline: '拒绝', cancel: '停止回合' }
 const decisions = computed(() => (props.prompt.decisions || []).filter(d => d in labels))
 const fileType: Record<string, string> = { add: '新增', delete: '删除', update: '修改' }
 
-const answers = computed(() => {
-  const out: Record<string, string> = {}
-  for (const q of props.prompt.questions || []) {
-    const value = (typed[q.id] || '').trim() || picked[q.id] || ''
-    if (value) out[q.id] = value
-  }
-  return out
-})
-const complete = computed(() => (props.prompt.questions || []).every(q => answers.value[q.id]))
+// Questions: one page per question (1 / N), reply box always open, 跳过 / 下一步 like the desktop App.
+const questions = computed(() => props.prompt.questions || [])
+const total = computed(() => questions.value.length)
+const current = computed(() => questions.value[Math.min(step.value, Math.max(0, total.value - 1))])
+const last = computed(() => step.value >= total.value - 1)
+const answerOf = (qid: string) => (typed[qid] || '').trim() || picked[qid] || ''
+const hasAnswer = computed(() => !!current.value && !!answerOf(current.value.id))
+watch(() => props.prompt.id, () => { step.value = 0 })
 
 async function decide(decision: PromptDecision) {
   if (submitting.value) return
@@ -32,19 +34,45 @@ async function decide(decision: PromptDecision) {
   if (!ok) submitting.value = ''
 }
 async function submit() {
-  if (submitting.value || !complete.value) return
+  if (submitting.value) return
   submitting.value = 'submit'
-  const ok = await answerPrompt(props.prompt.id, { answers: answers.value })
+  const out: Record<string, string> = {}
+  for (const q of questions.value) { const value = skipped[q.id] ? '' : answerOf(q.id); if (value) out[q.id] = value }
+  const ok = await answerPrompt(props.prompt.id, { answers: out })
   if (!ok) submitting.value = ''
 }
-function pick(qid: string, label: string) { picked[qid] = picked[qid] === label ? '' : label; typed[qid] = '' }
+function focusReply() { void nextTick(() => { const el = reply.value; if (el) { grow(); el.focus({ preventScroll: true }) } }) }
+function go(delta: number) { const next = step.value + delta; if (next >= 0 && next < total.value) { step.value = next; focusReply() } }
+function advance(skip: boolean) {
+  if (submitting.value || !current.value) return
+  skipped[current.value.id] = skip
+  if (last.value) void submit()
+  else go(1)
+}
+// Closing skips everything that is left; the turn keeps going (stop it from the composer).
+function dismiss() { for (const q of questions.value) if (!answerOf(q.id)) skipped[q.id] = true; void submit() }
+function pick(qid: string, label: string) { picked[qid] = picked[qid] === label ? '' : label; skipped[qid] = false }
+function grow() { const el = reply.value; if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px` }
+function onReplyKey(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  if (hasAnswer.value) advance(false)
+}
 </script>
 <template>
   <div class="prompt-card" :class="`kind-${prompt.kind}`" role="group" :aria-label="prompt.title">
     <div class="prompt-head">
       <span class="prompt-ico"><Icon :name="icon" :size="15" /></span>
       <strong>{{ prompt.title }}</strong>
-      <span class="prompt-wait"><span class="prompt-dot" />等待你的确认</span>
+      <span v-if="prompt.kind !== 'input'" class="prompt-wait"><span class="prompt-dot" />等待你的确认</span>
+      <span v-else class="prompt-nav">
+        <template v-if="total > 1">
+          <button type="button" class="prompt-nav-btn prev" aria-label="上一个问题" :disabled="step === 0 || !!submitting" @click="go(-1)"><Icon name="chevron" :size="14" /></button>
+          <span class="prompt-count">{{ step + 1 }} / {{ total }}</span>
+          <button type="button" class="prompt-nav-btn next" aria-label="下一个问题" :disabled="last || !!submitting" @click="go(1)"><Icon name="chevron" :size="14" /></button>
+        </template>
+        <button type="button" class="prompt-nav-btn" aria-label="全部跳过" data-tip="全部跳过" :disabled="!!submitting" @click="dismiss"><Icon name="x" :size="14" /></button>
+      </span>
     </div>
     <p v-if="prompt.reason" class="prompt-reason">{{ prompt.reason }}</p>
 
@@ -58,21 +86,27 @@ function pick(qid: string, label: string) { picked[qid] = picked[qid] === label 
       <li v-for="line in prompt.summary" :key="line" class="mono">{{ line }}</li>
     </ul>
 
-    <template v-if="prompt.kind === 'input'">
-      <div v-for="q in prompt.questions" :key="q.id" class="prompt-q">
-        <div v-if="q.header" class="prompt-q-head">{{ q.header }}</div>
-        <div class="prompt-q-text">{{ q.question }}</div>
-        <div v-if="q.options.length" class="prompt-chips">
-          <button v-for="o in q.options" :key="o.label" type="button" class="prompt-chip" :class="{ on: picked[q.id] === o.label && !typed[q.id] }" :title="o.description || o.label" :disabled="!!submitting" @click="pick(q.id, o.label)">
-            {{ o.label }}<span v-if="o.description" class="prompt-chip-sub">{{ o.description }}</span>
+    <template v-if="prompt.kind === 'input' && current">
+      <div class="prompt-q" :key="current.id">
+        <div v-if="current.header" class="prompt-q-head">{{ current.header }}</div>
+        <div class="prompt-q-text">{{ current.question }}</div>
+        <div v-if="current.options.length" class="prompt-opts" role="radiogroup" :aria-label="current.header || current.question">
+          <button v-for="(o, i) in current.options" :key="o.label" type="button" role="radio" class="prompt-opt" :class="{ on: picked[current.id] === o.label && !typed[current.id]?.trim() }" :aria-checked="picked[current.id] === o.label" :disabled="!!submitting" @click="pick(current.id, o.label)">
+            <span class="prompt-opt-n">{{ i + 1 }}</span>
+            <span class="prompt-opt-text"><span class="prompt-opt-label">{{ o.label }}</span><span v-if="o.description" class="prompt-opt-sub">{{ o.description }}</span></span>
+            <Icon v-if="picked[current.id] === o.label && !typed[current.id]?.trim()" name="check" :size="14" class="prompt-opt-check" />
           </button>
         </div>
-        <input v-if="q.isOther || !q.options.length" v-model="typed[q.id]" class="prompt-input" :type="q.isSecret ? 'password' : 'text'" :placeholder="q.options.length ? '或者输入其他回答…' : '输入回答…'" :disabled="!!submitting" @keydown.enter.prevent="submit">
+        <div class="prompt-reply">
+          <input v-if="current.isSecret" v-model="typed[current.id]" class="prompt-reply-box" type="password" :placeholder="current.options.length ? '或者输入其他回答…' : '回复…'" :disabled="!!submitting" autocomplete="off" @keydown="onReplyKey">
+          <textarea v-else ref="reply" v-model="typed[current.id]" rows="1" class="prompt-reply-box" :placeholder="current.options.length ? '或者输入其他回答…' : '回复…'" :disabled="!!submitting" @input="grow" @keydown="onReplyKey" />
+        </div>
       </div>
-      <div class="prompt-actions">
-        <button type="button" class="btn sm primary" :disabled="!complete || !!submitting" @click="submit"><Icon :name="submitting === 'submit' ? 'loader' : 'check'" :size="13" :class="{ spin: submitting === 'submit' }" />提交</button>
-        <span class="spacer" />
-        <button type="button" class="btn sm ghost" :disabled="!!submitting" @click="decide('cancel')"><Icon :name="submitting === 'cancel' ? 'loader' : 'stop'" :size="12" :class="{ spin: submitting === 'cancel' }" />停止回合</button>
+      <div class="prompt-actions end">
+        <button type="button" class="btn sm pill ghost" :disabled="!!submitting" @click="advance(true)">跳过</button>
+        <button type="button" class="btn sm pill primary" :disabled="!hasAnswer || !!submitting" @click="advance(false)">
+          <Icon v-if="submitting === 'submit'" name="loader" :size="13" class="spin" />{{ last ? '提交' : '下一步' }}
+        </button>
       </div>
     </template>
     <div v-else class="prompt-actions">

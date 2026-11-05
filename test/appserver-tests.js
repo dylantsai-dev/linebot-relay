@@ -263,7 +263,7 @@ async function main() {
   client.subscribed.delete(threadId);
   fake.loaded.delete(threadId);
   assert.equal((await post('one', 'resume')).status, 200);
-  assert.equal(JSON.stringify(fake.requests.find(r => r.method === 'thread/resume' && r.params.threadId === threadId).params), JSON.stringify({ threadId, excludeTurns: true }));
+  assert.equal(JSON.stringify(fake.requests.find(r => r.method === 'thread/resume' && r.params.threadId === threadId).params), JSON.stringify({ threadId, excludeTurns: true, config: { 'features.default_mode_request_user_input': true } }));
   assert.equal((await post('bound', 'bound', threadId)).body.codex_session_id, threadId);
   assert.equal((await post('one', '__steer__')).body.reply, 'reply:__steer__');
   assert.equal((await post('one', '__no_final__')).body.reply, 'last commentary');
