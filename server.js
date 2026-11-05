@@ -402,12 +402,14 @@ async function sessionListing() {
 }
 
 let modelCache = null;
+// The console never names the backend; drop it from upstream model labels.
+const hideBrand = text => String(text).replace(/\s*\bCodex\b/gi, '').replace(/\s{2,}/g, ' ').trim();
 async function modelList() {
   if (modelCache && Date.now() - modelCache.at < 60000) return modelCache.models;
   if (!appserver || !fs.existsSync(appserverSocket)) throw failure('模型服务未连接，暂时无法获取模型列表', 503);
   try {
     await appserver.connect();
-    const models = (await appserver.listModels()).map(m => ({ id: m.id || m.model, displayName: m.displayName || m.id || m.model, description: m.description || '', isDefault: !!m.isDefault }));
+    const models = (await appserver.listModels()).map(m => ({ id: m.id || m.model, displayName: hideBrand(m.displayName || m.id || m.model), description: hideBrand(m.description || ''), isDefault: !!m.isDefault }));
     modelCache = { at: Date.now(), models };
     return models;
   } catch (error) {
