@@ -235,6 +235,17 @@ export async function refreshSessions() {
 // Last history seen per session, so switching back shows it at once (then refreshes) instead of a skeleton.
 const historyCache = new Map<string, { history: HistoryEntry[]; running: boolean; sig: string; hasMore: boolean; olderMore: boolean | null }>()
 const HISTORY_PAGE = 50
+const HISTORY_CACHE_MAX = 12
+const HISTORY_KEEP_MAX = 400
+function putHistoryCache(key: string, value: { history: HistoryEntry[]; running: boolean; sig: string; hasMore: boolean; olderMore: boolean | null }) {
+  if (historyCache.has(key)) historyCache.delete(key)
+  historyCache.set(key, value)
+  while (historyCache.size > HISTORY_CACHE_MAX) {
+    const oldest = historyCache.keys().next().value
+    if (oldest === undefined) break
+    historyCache.delete(oldest)
+  }
+}
 /** has_more of the last older page fetched for the selected session (null: only the newest page is loaded). */
 let olderMore: boolean | null = null
 const timeOf = (entry?: HistoryEntry) => { const t = Date.parse(entry?.time || ''); return Number.isFinite(t) ? t : -Infinity }
@@ -295,7 +306,7 @@ export async function refreshHistory(key: string) {
   state.history = kept.length ? [...kept, ...data.history] : data.history
   state.hasMore = olderMore ?? !!data.has_more
   state.threadRunning = !!data.running
-  historyCache.set(key, { history: state.history, running: !!data.running, sig, hasMore: state.hasMore, olderMore })
+  putHistoryCache(key, { history: state.history, running: !!data.running, sig, hasMore: state.hasMore, olderMore })
 }
 /** Fetch the page of history just before the oldest loaded message and prepend it. */
 export async function loadOlder() {
@@ -311,7 +322,13 @@ export async function loadOlder() {
     state.history = [...older, ...state.history]
     state.hasMore = olderMore
     const cached = historyCache.get(key)
-    if (cached) historyCache.set(key, { ...cached, history: state.history, hasMore: state.hasMore, olderMore })
+    // Bound how much older history a single tab keeps (load-more can otherwise grow without limit).
+    if (state.history.length > HISTORY_KEEP_MAX) {
+      state.history = state.history.slice(-HISTORY_KEEP_MAX)
+      state.hasMore = true
+      olderMore = true
+    }
+    if (cached) putHistoryCache(key, { ...cached, history: state.history, hasMore: state.hasMore, olderMore })
   } catch (e) {
     if (state.selected === key) toast((e as Error).message || '加载失败')
   } finally {
@@ -323,6 +340,14 @@ export async function loadOlder() {
 let promptsSig = ''
 /** Cards answered here: an in-flight poll must not bring them back. */
 const answeredPrompts = new Set<string>()
+const ANSWERED_PROMPTS_MAX = 200
+function rememberAnswered(id: string) {
+  answeredPrompts.add(id)
+  if (answeredPrompts.size > ANSWERED_PROMPTS_MAX) {
+    const drop = [...answeredPrompts].slice(0, answeredPrompts.size - ANSWERED_PROMPTS_MAX)
+    for (const key of drop) answeredPrompts.delete(key)
+  }
+}
 function setPrompts(prompts: Prompt[]) {
   prompts = prompts.filter(p => !answeredPrompts.has(p.id))
   const sig = JSON.stringify(prompts)
@@ -339,12 +364,12 @@ export async function answerPrompt(id: string, body: { decision?: string; answer
   if (!key) return false
   try {
     await api(`/api/sessions/${keyPath(key)}/prompts/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(body) })
-    answeredPrompts.add(id)
+    rememberAnswered(id)
     if (state.selected === key) dropPrompt(id)
     return true
   } catch (e) {
     const status = (e as ApiError).status
-    if (status === 404 || status === 409) { answeredPrompts.add(id); if (state.selected === key) dropPrompt(id); toast('该请求已处理或已失效') }
+    if (status === 404 || status === 409) { rememberAnswered(id); if (state.selected === key) dropPrompt(id); toast('该请求已处理或已失效') }
     else toast((e as Error).message || '提交失败')
     return false
   }
@@ -620,7 +645,11 @@ function liveItem(id: string, init: Partial<LiveItem>, turnId?: string | null): 
   if (!liveBuf) liveBuf = { turnId: turnId || '', startedAt: new Date().toISOString(), items: [] }
   else if (turnId && !liveBuf.turnId) liveBuf.turnId = turnId
   let item = liveBuf.items.find(i => i.id === id)
-  if (!item) { item = { id, kind: 'other', ...init } as LiveItem; liveBuf.items.push(item) }
+  if (!item) {
+    item = { id, kind: 'other', ...init } as LiveItem
+    liveBuf.items.push(item)
+    if (liveBuf.items.length > 300) liveBuf.items.splice(0, liveBuf.items.length - 300)
+  }
   return item
 }
 function onStreamEvent(key: string, name: string, data: any) {
@@ -662,7 +691,8 @@ function onStreamEvent(key: string, name: string, data: any) {
   } else if (name === 'delta') {
     const item = liveItem(data.id, { kind: data.kind, text: '' }, data.turnId) as any
     item[data.field] = (item[data.field] || '') + data.delta
-    if (data.field === 'output' && item.output.length > 4000) item.output = item.output.slice(-4000)
+    const cap = data.field === 'output' ? 4000 : 400000
+    if (typeof item[data.field] === 'string' && item[data.field].length > cap) item[data.field] = item[data.field].slice(-cap)
     commitLive()
   }
 }

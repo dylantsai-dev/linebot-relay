@@ -8,6 +8,7 @@ node test/users-tests.js
 node test/feishu-tests.js
 node test/in-process-tests.js
 node test/live-turn-tests.js
+node test/memory-caps-tests.js
 node test/appserver-tests.js
 node test/appserver-tests.js --sockets
 node <<'NODE'

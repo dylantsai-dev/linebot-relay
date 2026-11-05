@@ -354,14 +354,19 @@ async function sessionHistory(key, limit, principal, before = null) {
   if (appserver?.connected && id) {
     try {
       const cache = await appserver.readThread(id);
-      const thread = { ...cache.thread, id };
-      const active = appserver.runningTurn(cache.thread);
-      const running = !!active || appserver.threadState(id).status === 'active';
-      const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
-      const roots = mediaRoots(key, thread);
-      const page = historyPage(threadHistory(thread, local), limit, before);
-      return { key, session: key, history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)), has_more: page.has_more, source: 'thread', revision: cache.revision, running: running || !!live.get(key)?.running, queue: publicQueue(key), prompts: sessionPrompts(key),
-        ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread) } : {}) };
+      try {
+        const thread = { ...cache.thread, id };
+        const active = appserver.runningTurn(cache.thread);
+        const running = !!active || appserver.threadState(id).status === 'active';
+        const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
+        const roots = mediaRoots(key, thread);
+        const page = historyPage(threadHistory(thread, local), limit, before);
+        return { key, session: key, history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)), has_more: page.has_more, source: 'thread', revision: cache.revision, running: running || !!live.get(key)?.running, queue: publicQueue(key), prompts: sessionPrompts(key),
+          ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread) } : {}) };
+      } finally {
+        // Do not keep multi‑MB turn lists resident between polls.
+        appserver.compactThreadCache(id);
+      }
     } catch { /* Preserve local history if the App is unavailable. */ }
   }
   const roots = mediaRoots(key, null);
@@ -419,11 +424,12 @@ async function listCodexThreads(url) {
 }
 async function sessionListing() {
   const ids = [...new Set(Object.values(sessions).map(s => s.codex_session_id).filter(Boolean))];
+  // Listing only needs status / timestamps: never pull or keep full turn payloads (multi‑MB sessions).
   if (appserver?.connected && ids.length) {
     let timer;
     try {
       await Promise.race([
-        Promise.allSettled(ids.map(id => appserver.readThread(id, 10000))),
+        Promise.allSettled(ids.map(id => appserver.readThread(id, 10000, { includeTurns: false }))),
         new Promise(resolve => { timer = setTimeout(resolve, 2800); }),
       ]);
     } finally { clearTimeout(timer); }
@@ -435,8 +441,11 @@ async function sessionListing() {
     const thread = watched?.cache?.thread;
     const turns = thread?.turns || [];
     const last = turns.at(-1);
+    const messages = thread
+      ? (Number.isFinite(thread._completedTurns) ? thread._completedTurns : turns.filter(t => t.status === 'completed').length)
+      : undefined;
     return { key, codex_session_id: null, messages: 0, created_at: state?.created_at, updated_at: state?.updated_at, ...stored,
-      ...(thread ? { messages: turns.filter(t => t.status === 'completed').length,
+      ...(thread ? { ...(messages !== undefined ? { messages } : {}),
         updated_at: unixTime(last?.completedAt ?? last?.startedAt ?? thread.updatedAt) || stored?.updated_at } : {}),
       status: state?.running || watched?.status === 'active' || !!appserver?.runningTurn(thread) ? 'running' : state?.queued ? 'queued' : 'idle', queued: state?.queued || 0 };
   }).sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
@@ -1083,7 +1092,15 @@ function streamSession(req, res, key, principal) {
     queue = [];
     write(merged.map(item => event(item.name, item.data)).join(''));
   };
-  const push = (name, data) => { queue.push({ name, data }); if (!flushTimer) flushTimer = setTimeout(flush, 60); };
+  const push = (name, data) => {
+    // A stuck client must not grow an unbounded outbound buffer.
+    if (queue.length >= 250) {
+      const kept = queue.filter(item => item.name !== 'delta').slice(-80);
+      queue.length = 0;
+      queue.push(...kept, { name, data });
+    } else queue.push({ name, data });
+    if (!flushTimer) flushTimer = setTimeout(flush, 60);
+  };
   const snapshot = () => {
     const id = sessions[key]?.codex_session_id;
     const state = id && appserver ? appserver.threads.get(id) : null;
@@ -1287,8 +1304,11 @@ const server = http.createServer(async (req, res) => {
           if (live.has(key)) throw failure('Session is running or queued', 409);
           await verifyThread(input.codex_session_id);
           const now = new Date().toISOString(), existed = !!sessions[key];
+          const previous = sessions[key]?.codex_session_id;
           sessions[key] = { ...sessions[key], codex_session_id: input.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.codex_session_id === input.codex_session_id ? sessions[key].messages || 0 : 0 };
           persist();
+          if (appserver && previous && previous !== input.codex_session_id
+            && !Object.values(sessions).some(entry => entry?.codex_session_id === previous)) appserver.forgetThread(previous);
           if (appserver) void appserver.subscribe(input.codex_session_id).catch(() => {});
           send(res, existed ? 200 : 201, { session: { key, ...sessions[key] } }); return;
         }
@@ -1369,7 +1389,9 @@ const server = http.createServer(async (req, res) => {
           if (!principal.admin) throw failure('仅管理员可以删除会话', 403);
           if (live.has(key)) throw failure('Session is running or queued', 409);
           if (!sessions[key] && !fs.existsSync(file)) throw failure('Session not found', 404);
+          const previous = sessions[key]?.codex_session_id;
           removeAvatar(key); delete sessions[key]; persist(); users.forgetSession(key);
+          if (appserver && previous && !Object.values(sessions).some(entry => entry?.codex_session_id === previous)) appserver.forgetThread(previous);
           try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
           send(res, 200, { ok: true }); return;
         }
