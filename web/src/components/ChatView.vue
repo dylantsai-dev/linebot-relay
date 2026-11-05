@@ -193,7 +193,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <span v-else class="id-pill mono muted">{{ selectedSession?.draft ? '首条消息后创建' : '未绑定' }}</span>
         </div>
         <span class="spacer" />
-        <ModelPicker v-if="selectedSession && !selectedSession.draft" :session="selectedSession" :editable="isAdmin" />
+        <ModelPicker v-if="isAdmin && selectedSession && !selectedSession.draft" :session="selectedSession" :editable="true" />
         <span v-if="state.historySource === 'local'" class="src-pill" data-tip="ディランボット 三代目 未连接，显示本地记录">本地记录</span>
         <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="Webhook" aria-label="Webhook" aria-haspopup="dialog" @click="openWebhook(selectedSession)"><Icon name="webhook" /></button>
         <button v-if="canCreate && selectedSession && !selectedSession.draft" class="btn ghost icon-only" data-tip="编辑名称和头像" aria-label="编辑会话" @click="editSession(selectedSession)"><Icon name="pencil" /></button>
