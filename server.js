@@ -893,8 +893,8 @@ function validate(body) {
 // Console UI: the Vue build in web/dist (SPA, served under /console/) when present,
 // otherwise the legacy single-file console.html. /console/legacy always serves the legacy page.
 const consoleDist = path.resolve(process.env.CONSOLE_DIST || path.join(__dirname, 'web', 'dist'));
-const consoleCsp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
-const staticTypes = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json; charset=utf-8' };
+const consoleCsp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'";
+const staticTypes = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json; charset=utf-8' };
 function consoleHtml(res, file) {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': consoleCsp, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' });
   res.end(fs.readFileSync(file, 'utf8'));
@@ -913,7 +913,9 @@ function serveConsole(req, res, route) {
   if (inside) { try { stat = fs.statSync(target); } catch { /* fall through */ } }
   if (stat?.isFile() && path.basename(target) !== 'index.html') {
     const hashed = relative.startsWith('assets/');
-    res.writeHead(200, { 'Content-Type': staticTypes[path.extname(target).toLowerCase()] || 'application/octet-stream', 'Content-Length': stat.size, 'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+    const headers = { 'Content-Type': staticTypes[path.extname(target).toLowerCase()] || 'application/octet-stream', 'Content-Length': stat.size, 'Cache-Control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' };
+    if (path.basename(target) === 'sw.js') headers['Service-Worker-Allowed'] = '/console/';
+    res.writeHead(200, headers);
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(target).on('error', () => res.destroy()).pipe(res);
     return;

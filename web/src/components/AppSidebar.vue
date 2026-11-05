@@ -7,6 +7,7 @@ import {
   editSession, openWebhook, setSessionPaused, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
   logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink,
 } from '../store'
+import { canInstall, showIosInstallHint, installPwa } from '../lib/pwa'
 import { shortTime, time } from '../lib/format'
 import { copy } from '../lib/clipboard'
 
@@ -50,6 +51,16 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
 const dialog = ref<HTMLDialogElement>()
 const current = ref(''), next = ref(''), confirm = ref(''), busy = ref(false), error = ref('')
 function openPassword() { userOpen.value = false; current.value = next.value = confirm.value = error.value = ''; dialog.value?.showModal() }
+
+async function onInstall() {
+  userOpen.value = false
+  const ok = await installPwa()
+  toast(ok ? '已开始安装到桌面' : '已取消安装', ok)
+}
+function onIosHint() {
+  userOpen.value = false
+  toast('在 Safari 点分享，再选「添加到主屏幕」', true)
+}
 async function savePassword() {
   if (next.value.length < 8) { error.value = '新密码至少 8 位'; return }
   if (next.value !== confirm.value) { error.value = '两次输入的新密码不一致'; return }
@@ -129,6 +140,8 @@ async function savePassword() {
             <span><strong>{{ name }}</strong><small class="muted">{{ state.me?.user ? (isAdmin ? '超级管理员 · 全部会话' : '普通用户 · 仅分配的会话') : 'WEBHOOK_TOKEN · 全部权限' }}</small></span>
           </div>
           <button class="menu-item" role="menuitem" @click="toggleTheme(); userOpen = false"><Icon :name="isDark ? 'sun' : 'moon'" :size="15" /><span class="menu-label">{{ isDark ? '浅色模式' : '深色模式' }}</span></button>
+          <button v-if="canInstall" class="menu-item" role="menuitem" @click="onInstall"><Icon name="download" :size="15" /><span class="menu-label">安装到桌面</span></button>
+          <button v-else-if="showIosInstallHint" class="menu-item" role="menuitem" @click="onIosHint"><Icon name="download" :size="15" /><span class="menu-label">添加到主屏幕</span></button>
           <button v-if="state.me?.user" class="menu-item" role="menuitem" @click="openPassword"><Icon name="lock" :size="15" /><span class="menu-label">修改密码</span></button>
           <button class="menu-item" role="menuitem" @click="logout()"><Icon name="logout" :size="15" /><span class="menu-label">退出登录</span></button>
         </div>

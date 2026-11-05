@@ -3,7 +3,8 @@
 
     python3 scripts/render-icons.py
 
-favicon-32.png: light variant, transparent corners. apple-touch-icon.png: 180x180, full-bleed tile (iOS rounds it)."""
+favicon-32.png: light variant, transparent corners. apple-touch-icon.png: 180x180, full-bleed tile (iOS rounds it).
+icon-192.png / icon-512.png: PWA install icons (full-bleed on warm off-white)."""
 import asyncio, base64, pathlib, re
 from playwright.async_api import async_playwright
 
@@ -21,12 +22,19 @@ async def main():
     src = (ROOT / 'src' / 'brand' / 'mark.svg').read_text()
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        for name, size, bleed in [('favicon-32.png', 32, False), ('apple-touch-icon.png', 180, True)]:
+        jobs = [
+            ('favicon-32.png', 32, False, True),
+            ('apple-touch-icon.png', 180, True, True),
+            ('icon-192.png', 192, True, False),
+            ('icon-512.png', 512, True, False),
+        ]
+        for name, size, bleed, transparent in jobs:
             page = await browser.new_page(viewport={'width': size, 'height': size})
             data = base64.b64encode(variant(src, size, bleed).encode()).decode()
-            await page.set_content(f'<html><body style="margin:0;background:transparent"><img src="data:image/svg+xml;base64,{data}" style="display:block"></body></html>')
+            bg = 'transparent' if transparent else '#faf9f5'
+            await page.set_content(f'<html><body style="margin:0;background:{bg}"><img src="data:image/svg+xml;base64,{data}" style="display:block;width:100%;height:100%"></body></html>')
             await page.wait_for_timeout(100)
-            await page.screenshot(path=str(PUBLIC / name), omit_background=True, clip={'x': 0, 'y': 0, 'width': size, 'height': size})
+            await page.screenshot(path=str(PUBLIC / name), omit_background=transparent, clip={'x': 0, 'y': 0, 'width': size, 'height': size})
             print('wrote', PUBLIC / name)
         await browser.close()
 
