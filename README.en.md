@@ -5,7 +5,7 @@
 <p align="center"><b>Connect webhooks and a web console to your existing Codex threads: read messages, send messages, nothing more.</b></p>
 
 <p align="center">
-  <a href="README.md">简体中文</a> · <b>English</b>
+  <a href="README.md">简体中文</a> · <b>English</b> · <a href="README.ja.md">日本語</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.ru.md">Русский</a>
 </p>
 
 <p align="center">

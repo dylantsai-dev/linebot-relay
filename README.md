@@ -5,7 +5,7 @@
 <p align="center"><b>把 Webhook 和网页控制台接到你已有的 Codex 会话上：看消息、发消息，仅此而已。</b></p>
 
 <p align="center">
-  <b>简体中文</b> · <a href="README.en.md">English</a>
+  <b>简体中文</b> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.ru.md">Русский</a>
 </p>
 
 <p align="center">
