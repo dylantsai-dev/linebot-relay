@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { LiveItem, LiveTurn } from '../lib/types'
 import { renderMarkdown, splitBlocks } from '../lib/markdown'
 import { workedFor } from '../lib/format'
-import { state } from '../store'
 import Icon from './Icon.vue'
+import ImageStack from './ImageStack.vue'
 import TurnSteps from './TurnSteps.vue'
 
 // The in-progress turn, laid out exactly like the finished message (head, rule, steps, answer,
@@ -21,7 +21,7 @@ const answer = computed<LiveItem | null>(() => {
 })
 const steps = computed(() => items.value.filter(i => i !== answer.value && ['text', 'command', 'tool', 'search', 'file'].includes(i.kind) && (i.kind !== 'text' || !!i.text?.trim())))
 const images = computed(() => items.value.filter(i => i.kind === 'image' && i.url))
-const zoom = (src: string) => (state.lightbox = { src, alt: '生成的图片' })
+const stackImages = computed(() => images.value.map(img => ({ src: img.url!, alt: img.title || '生成的图片', title: img.title || '生成的图片' })))
 const head = computed(() => {
   const t = props.elapsed !== undefined ? ` ${workedFor(props.elapsed)}` : ''
   if (answer.value?.text) return `正在输出${t}`
@@ -61,9 +61,7 @@ const blocks = computed(() => {
       <div class="turn-rule" />
       <div class="turn-steps" :class="{ open: open && steps.length }"><div><TurnSteps v-if="steps.length" :steps="steps" live /></div></div>
       <div v-if="blocks.length" class="msg-body md streaming"><div v-for="(b, i) in blocks" :key="i" class="md-block" v-html="b" /></div>
-      <div v-if="images.length" class="gen-images">
-        <button v-for="img in images" :key="img.id" type="button" class="gen-image" @click="zoom(img.url!)"><img :src="img.url" alt="生成的图片" loading="lazy" referrerpolicy="no-referrer"></button>
-      </div>
+      <ImageStack v-if="stackImages.length" :images="stackImages" />
       <div class="msg-actions" aria-hidden="true" />
     </div>
   </article>

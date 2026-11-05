@@ -6,6 +6,7 @@ import { time, workedFor } from '../lib/format'
 import { copy } from '../lib/clipboard'
 import { state } from '../store'
 import AttachmentList from './AttachmentList.vue'
+import ImageStack from './ImageStack.vue'
 import Icon from './Icon.vue'
 import TurnSteps from './TurnSteps.vue'
 
@@ -20,6 +21,11 @@ const html = computed(() => {
   if (props.entry.role === 'user' || props.entry.role === 'error') return renderPlain(props.entry.text)
   return renderMarkdown(props.entry.text)
 })
+const stackImages = computed(() => (props.entry.images || []).map(img => ({
+  src: img.url,
+  alt: img.prompt || img.name || '图片',
+  title: img.prompt || img.name,
+})))
 
 // Copy buttons for fenced code blocks, via delegation (no per-render DOM work).
 function onClick(e: MouseEvent) {
@@ -51,11 +57,7 @@ const withCopy = computed(() => {
         <div class="turn-steps" :class="{ open: open && steps.length }"><div><TurnSteps v-if="steps.length" :steps="steps" /></div></div>
       </template>
       <div v-if="entry.text" class="msg-body" :class="{ md: entry.role === 'assistant' }" data-cite-source="1" @click="onClick" v-html="withCopy" />
-      <div v-if="entry.images?.length" class="gen-images">
-        <button v-for="(img, i) in entry.images" :key="img.url" type="button" class="gen-image" :title="img.prompt || img.name" @click="state.lightbox = { src: img.url, alt: img.prompt || img.name || `图片 ${i + 1}` }">
-          <img :src="img.url" :alt="img.prompt || img.name || '图片'" loading="lazy" decoding="async" referrerpolicy="no-referrer">
-        </button>
-      </div>
+      <ImageStack v-if="stackImages.length" :images="stackImages" />
       <AttachmentList v-if="entry.attachments?.length" :files="entry.attachments" />
       <div class="msg-actions">
         <button v-if="entry.role !== 'error' && entry.text" type="button" class="act-btn" :data-tip="copied ? '已复制' : '复制'" aria-label="复制消息" @click="copyText"><Icon :name="copied ? 'check' : 'copy'" :size="14" :stroke="1.6" /></button>
