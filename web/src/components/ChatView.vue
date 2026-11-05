@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast, loadOlder } from '../store'
 import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
 import { fileSize } from '../lib/format'
 import MessageItem from './MessageItem.vue'
 import LiveTurn from './LiveTurn.vue'
+import PromptCard from './PromptCard.vue'
 import Icon from './Icon.vue'
 import ModelPicker from './ModelPicker.vue'
 
@@ -67,13 +68,45 @@ const liveElapsed = computed(() => {
 
 /* ---- scroll: stick to bottom only when already near it; never jump otherwise ---- */
 let stick = true
-watch([items, optimistic, running, inflight, () => state.live], () => { const el = scroller.value; if (el) stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }, { flush: 'pre' })
-watch([items, optimistic, running, inflight, () => state.live], () => { const el = scroller.value; if (el && (stick || pending.value)) el.scrollTop = el.scrollHeight }, { flush: 'post' })
+// Older pages are prepended: keep the first visible message where it was instead of sticking or jumping.
+let anchor: { el: Element; top: number } | null = null
+const promptCount = computed(() => state.prompts.length)
+watch([items, optimistic, running, inflight, () => state.live, promptCount], () => {
+  const el = scroller.value; if (!el) return
+  stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  anchor = null
+  if (!stick) {
+    const box = el.getBoundingClientRect()
+    const first = [...el.querySelectorAll('.messages-inner > .msg, .messages-inner > .inflight')].find(m => m.getBoundingClientRect().bottom > box.top)
+    if (first) anchor = { el: first, top: first.getBoundingClientRect().top }
+  }
+}, { flush: 'pre' })
+watch([items, optimistic, running, inflight, () => state.live, promptCount], () => {
+  const el = scroller.value; if (!el) return
+  if (stick || pending.value) { el.scrollTop = el.scrollHeight; return }
+  if (anchor && anchor.el.isConnected) el.scrollTop += anchor.el.getBoundingClientRect().top - anchor.top
+  anchor = null
+  void nextTick(fillViewport)
+}, { flush: 'post' })
+/* ---- pagination: near the top -> fetch the page before the oldest message ---- */
+let quietUntil = 0
+function onScroll() {
+  const el = scroller.value
+  if (!el || Date.now() < quietUntil || !state.hasMore || state.loadingOlder) return
+  if (el.scrollTop < 80) void loadOlder()
+}
+// A short first page that does not fill the screen cannot be scrolled: load more until it does.
+function fillViewport() {
+  const el = scroller.value
+  if (el && state.hasMore && !state.loadingOlder && items.value.length && el.scrollHeight <= el.clientHeight + 80) void loadOlder()
+}
+watch(() => state.hasMore, more => { if (more) void nextTick(fillViewport) })
 
 watch(() => state.selected, async (key, prev) => {
   if (prev !== undefined) textDrafts.set(prev, text.value)
   text.value = textDrafts.get(key) || ''
   stick = true
+  quietUntil = Date.now() + 600
   await nextTick(); grow()
   if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
   if (key && matchMedia('(min-width: 768px)').matches) textarea.value?.focus({ preventScroll: true })
@@ -146,7 +179,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
       <span v-else class="spacer" />
     </header>
 
-    <div ref="scroller" class="messages">
+    <div ref="scroller" class="messages" @scroll.passive="onScroll">
       <Transition name="conv" mode="out-in" @enter="toBottom">
       <div :key="viewKey" class="messages-inner" :class="{ 'is-loading': viewKey.endsWith(':loading') }">
         <div v-if="!state.selected" class="welcome">
@@ -172,6 +205,10 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
             <h1 class="display">{{ greeting }}<template v-if="who">，{{ who }}</template></h1>
             <p class="muted">消息会进入 <span class="mono">{{ state.selected }}</span> 对应的会话。</p>
           </div>
+          <div v-if="items.length && (state.hasMore || state.loadingOlder)" key="__older" class="older-row" aria-live="polite">
+            <template v-if="state.loadingOlder"><Icon name="loader" :size="12" class="spin" />加载更早的消息…</template>
+            <button v-else type="button" @click="loadOlder"><Icon name="chevron-up" :size="12" /> 加载更早的消息</button>
+          </div>
           <MessageItem v-for="item in items" :key="item.key" :entry="item.entry" />
           <div v-for="f in inflight" :key="'q-' + f.id" class="inflight" :class="{ steered: f.steered }">
             <MessageItem :entry="f.entry" :optimistic="!f.steered" />
@@ -179,6 +216,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           </div>
           <MessageItem v-if="optimistic" key="__optimistic" :entry="optimistic" optimistic />
           <LiveTurn v-if="liveShown" :turn="state.live" :elapsed="liveElapsed" />
+          <PromptCard v-for="p in state.prompts" :key="p.id" :prompt="p" />
         </template>
       </div>
       </Transition>

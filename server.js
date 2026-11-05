@@ -309,7 +309,34 @@ function publicLiveItem(item, key, uid, roots) {
   const url = media.url(file, roots, key, uid);
   return url ? { ...rest, url } : rest;
 }
-async function sessionHistory(key, limit, principal) {
+// Pending approvals / questions of the session's thread, as console cards.
+const hideBrandText = text => typeof text === 'string' ? text.replace(/\bCodex\b/gi, '三代目') : text;
+function publicPrompt(view) {
+  const next = { ...view, reason: hideBrandText(view.reason) };
+  if (next.questions) next.questions = next.questions.map(q => ({ ...q, header: hideBrandText(q.header), question: hideBrandText(q.question), options: q.options.map(o => ({ ...o, description: hideBrandText(o.description) })) }));
+  return next;
+}
+function sessionPrompts(key) {
+  const id = sessions[key]?.codex_session_id;
+  return appserver && id ? appserver.promptsFor(id).map(publicPrompt) : [];
+}
+// One page of history: the newest `limit` entries, or those strictly older than `before`.
+// A page never splits entries that share a timestamp, so `before=<oldest time>` cannot skip any.
+function historyPage(all, limit, before) {
+  const at = entry => { const t = Date.parse(entry.time); return Number.isFinite(t) ? t : -Infinity; };
+  const list = before === null ? all : all.filter(entry => at(entry) < before);
+  let start = Math.max(0, list.length - limit);
+  while (start > 0 && at(list[start - 1]) === at(list[start]) && at(list[start]) !== -Infinity) start--;
+  return { entries: list.slice(start), has_more: start > 0 };
+}
+function beforeOf(url) {
+  const raw = url.searchParams.get('before');
+  if (raw === null || raw === '') return null;
+  const time = Date.parse(raw);
+  if (!Number.isFinite(time)) throw failure('Invalid before', 400);
+  return time;
+}
+async function sessionHistory(key, limit, principal, before = null) {
   const local = readLines(path.join(historyDir, `${safeKey(key)}.jsonl`)).map(JSON.parse);
   const id = sessions[key]?.codex_session_id;
   if (appserver?.connected && id) {
@@ -320,12 +347,14 @@ async function sessionHistory(key, limit, principal) {
       const running = !!active || appserver.threadState(id).status === 'active';
       const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
       const roots = mediaRoots(key, thread);
-      return { key, session: key, history: threadHistory(thread, local).slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'thread', revision: cache.revision, running: running || !!live.get(key)?.running, queue: publicQueue(key),
+      const page = historyPage(threadHistory(thread, local), limit, before);
+      return { key, session: key, history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)), has_more: page.has_more, source: 'thread', revision: cache.revision, running: running || !!live.get(key)?.running, queue: publicQueue(key), prompts: sessionPrompts(key),
         ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread) } : {}) };
     } catch { /* Preserve local history if the App is unavailable. */ }
   }
   const roots = mediaRoots(key, null);
-  return { key, session: key, history: local.slice(-limit).map(entry => decorateEntry(entry, key, principal, roots)), source: 'local', running: !!live.get(key)?.running, queue: publicQueue(key) };
+  const page = historyPage(local.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0)), limit, before);
+  return { key, session: key, history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)), has_more: page.has_more, source: 'local', running: !!live.get(key)?.running, queue: publicQueue(key), prompts: sessionPrompts(key) };
 }
 
 // ----- Codex thread lookup: sessions link existing threads -----
@@ -934,7 +963,7 @@ function streamSession(req, res, key, principal) {
     const id = sessions[key]?.codex_session_id;
     const state = id && appserver ? appserver.threads.get(id) : null;
     const relay = live.get(key);
-    write(event('snapshot', { key, codex_session_id: id || null, running: !!(relay?.running || state?.status === 'active' || state?.live), queued: relay?.queued || 0, queue: publicQueue(key), live: publicLive(state?.live || null, key, principal, cachedThread(key)) }));
+    write(event('snapshot', { key, codex_session_id: id || null, running: !!(relay?.running || state?.status === 'active' || state?.live), queued: relay?.queued || 0, queue: publicQueue(key), live: publicLive(state?.live || null, key, principal, cachedThread(key)), prompts: sessionPrompts(key) }));
   };
   write('retry: 3000\n\n');
   snapshot();
@@ -946,6 +975,12 @@ function streamSession(req, res, key, principal) {
     if (data.type === 'item') push('item', { item: { ...publicLiveItem(data.item, key, uid, mediaRoots(key, cachedThread(key))) } });
     else if (data.type === 'delta') push('delta', data);
     else if (data.type === 'turn') { push('turn', data); flush(); }
+  }) : () => {};
+  const offPrompt = appserver ? appserver.onPrompt((threadId, data) => {
+    if (threadId !== sessions[key]?.codex_session_id) return;
+    if (data.type === 'prompt') push('prompt', { prompt: publicPrompt(data.prompt) });
+    else push('prompt_resolved', { id: data.id, reason: data.reason });
+    flush();
   }) : () => {};
   // Joined mid-turn (e.g. relay restarted): seed the live buffer from the thread snapshot.
   const id = sessions[key]?.codex_session_id;
@@ -966,7 +1001,7 @@ function streamSession(req, res, key, principal) {
   function close() {
     if (closed) return;
     closed = true;
-    clearInterval(heartbeat); clearTimeout(flushTimer); off(); queueListeners.delete(onQueue); streams.delete(entry);
+    clearInterval(heartbeat); clearTimeout(flushTimer); off(); offPrompt(); queueListeners.delete(onQueue); streams.delete(entry);
   }
   req.on('close', close);
   res.on('close', close);
@@ -1093,7 +1128,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/avatar|\/prompts\/[A-Za-z0-9_-]{1,64}|\/webhook(?:\/rotate)?|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
       if (match) {
         let key;
         try {
@@ -1171,7 +1206,17 @@ const server = http.createServer(async (req, res) => {
           send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return;
         }
         if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
-        if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550), principal)); return; }
+        if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 50, 550), principal, beforeOf(url))); return; }
+        // Answer an approval / question card: { decision } or { answers: { questionId: string | string[] } }.
+        if (req.method === 'POST' && match[2]?.startsWith('/prompts/')) {
+          const promptId = match[2].slice(9), threadId = sessions[key]?.codex_session_id;
+          const prompt = appserver && threadId ? appserver.promptById(promptId) : null;
+          if (!prompt || prompt.threadId !== threadId) throw failure('该请求已处理或已失效', 404);
+          const input = await readJson(req);
+          const result = appserver.answerPrompt(promptId, { decision: typeof input.decision === 'string' ? input.decision : undefined, answers: input.answers });
+          log({ request_id: requestId, event: 'prompt_answered', session: key, kind: result.kind, decision: result.decision, user: principal.user?.username || null, status: 200, duration: Date.now() - started });
+          send(res, 200, { ok: true, ...result }); return;
+        }
         if (req.method === 'GET' && match[2] === '/stream') { streamSession(req, res, key, principal); return; }
         if (req.method === 'GET' && match[2] === '/queue') { send(res, 200, { queue: publicQueue(key), running: !!live.get(key)?.running || threadBusy(key) }); return; }
         if (req.method === 'POST' && match[2]?.startsWith('/queue/') && match[2].endsWith('/steer')) { send(res, 200, { ok: true, ...await steerQueued(key, match[2].slice(7, -6), principal) }); return; }

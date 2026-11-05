@@ -47,7 +47,15 @@ export interface LiveTurn { turnId: string; startedAt: string; items: LiveItem[]
 export type SendMode = 'queue' | 'steer'
 /** Relay-side queue entry: steered into the running turn, running, or waiting (排队). */
 export interface QueueEntry { id: string; text: string; mode: SendMode; status: 'steered' | 'running' | 'queued'; source: string; user: string | null; created_at: string; started_at?: string; fallback?: 'no_active_turn' | 'steer_rejected'; attachments: Attachment[] }
-export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; live?: LiveTurn; queue?: QueueEntry[] }
+export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; live?: LiveTurn; queue?: QueueEntry[]; has_more?: boolean; prompts?: Prompt[] }
+/** A pending approval / question from the running turn, answered from the console. */
+export type PromptDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
+export interface PromptQuestion { id: string; header: string; question: string; options: { label: string; description: string }[]; isOther: boolean; isSecret: boolean }
+export interface Prompt {
+  id: string; kind: 'command' | 'file' | 'input' | 'permissions'; title: string; reason: string | null; created_at: string
+  turnId?: string | null; command?: string | null; cwd?: string | null; files?: { path: string; type: string }[]; grant_root?: string | null
+  summary?: string[]; questions?: PromptQuestion[]; decisions?: PromptDecision[]
+}
 export interface CodexThread { id: string; title: string; preview: string; updated_at: string | null; created_at: string | null; cwd: string | null; status: string | null; source: string | null; linked: string[] }
 export interface Stats { today: { calls: number; failures: number; avg_duration_ms: number }; total_sessions: number; running: number; queued: number; uptime_s: number; scope?: 'granted' }
 export interface RequestRow { time: string; request_id: string; session: string | null; source: string; method: string; path: string; status: number | string; ok: boolean; duration_ms: number; error: string | null }

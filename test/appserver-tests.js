@@ -265,8 +265,71 @@ async function main() {
   assert.equal((await post('bound', 'bound', threadId)).body.codex_session_id, threadId);
   assert.equal((await post('one', '__steer__')).body.reply, 'reply:__steer__');
   assert.equal((await post('one', '__no_final__')).body.reply, 'last commentary');
-  assert.equal((await post('one', '__approval__')).body.reply, 'reply:__approval__');
-  assert.ok(fake.requests.every(r => !String(r.id).startsWith('server-')), 'all server requests remain unanswered');
+  // Approval / question cards: the turn waits until the console answers each prompt.
+  assert.equal((await rawApi('POST', '/api/users', { username: 'helper', password: 'helper-pass-1', role: 'user', sessions: ['one'] })).status, 201);
+  assert.equal((await rawApi('POST', '/api/users', { username: 'stranger', password: 'stranger-pass-1', role: 'user', sessions: [] })).status, 201);
+  const helperAuth = `Bearer ${(await rawApi('POST', '/api/auth/login', { username: 'helper', password: 'helper-pass-1' })).body.token}`;
+  const strangerAuth = `Bearer ${(await rawApi('POST', '/api/auth/login', { username: 'stranger', password: 'stranger-pass-1' })).body.token}`;
+  const promptStream = stream('/api/sessions/one/stream');
+  let askDone = false;
+  const asking = post('one', '__approval__').finally(() => { askDone = true; });
+  let cards = [];
+  for (let i = 0; i < 200 && cards.length < 5; i++) { await pause(5); cards = (await get('/api/sessions/one/history')).body.prompts || []; }
+  assert.equal(cards.length, 5, 'supported requests become cards; the unknown one does not');
+  assert.deepEqual(cards.map(c => c.kind).sort(), ['command', 'command', 'file', 'file', 'input']);
+  assert.ok(!JSON.stringify(cards).includes('Codex'), 'cards never name the backend');
+  const card = (kind, test = () => true) => cards.find(c => c.kind === kind && test(c));
+  const v2Command = card('command', c => c.command === 'rm -rf build'), legacyCommand = card('command', c => c.command === 'git push');
+  assert.ok(v2Command && legacyCommand);
+  assert.equal(v2Command.cwd, '/tmp/work');
+  assert.deepEqual(v2Command.decisions, ['accept', 'acceptForSession', 'decline', 'cancel']);
+  const patchCard = card('file', c => c.files.length === 2), fileCard = card('file', c => c !== patchCard);
+  assert.deepEqual(patchCard.files.map(f => f.path), ['src/a.js', 'src/b.js']);
+  const ask = card('input');
+  assert.equal(ask.questions[0].id, 'color'); assert.equal(ask.questions[0].options[1].label, 'blue'); assert.equal(ask.questions[0].isOther, true);
+  assert.ok(promptStream.events.filter(e => e.name === 'prompt').length >= 5, 'cards are pushed on the stream');
+  await pause(120);
+  assert.equal(askDone, false, 'a turn waiting on a person does not time out');
+  const answer = (c, body, auth = helperAuth) => rawApi('POST', `/api/sessions/one/prompts/${c.id}`, body, auth);
+  assert.equal((await answer(v2Command, { decision: 'accept' }, strangerAuth)).status, 404, 'ungranted users cannot answer');
+  assert.equal((await answer(fileCard, { decision: 'maybe' })).status, 400);
+  assert.equal((await rawApi('POST', '/api/sessions/one/prompts/nope', { decision: 'accept' })).status, 404);
+  assert.equal((await answer(v2Command, { decision: 'accept' })).status, 200, 'a granted user can answer');
+  assert.equal((await answer(v2Command, { decision: 'accept' })).status, 404, 'answered once only');
+  assert.equal((await answer(legacyCommand, { decision: 'acceptForSession' })).status, 200);
+  assert.equal((await answer(patchCard, { decision: 'decline' })).status, 200);
+  assert.equal((await answer(fileCard, { decision: 'decline' }, 'Bearer test-token')).status, 200);
+  assert.equal((await get('/api/sessions/one/history')).body.prompts.length, 1);
+  assert.equal((await answer(ask, { answers: { color: 'blue', ignored: 'x' } })).status, 200);
+  assert.equal((await asking).body.reply, 'reply:__approval__');
+  const replyTo = id => fake.replies.find(r => r.id === id)?.result;
+  assert.deepEqual(replyTo('server-item/commandExecution/requestApproval'), { decision: 'accept' });
+  assert.deepEqual(replyTo('server-execCommandApproval'), { decision: 'approved_for_session' });
+  assert.deepEqual(replyTo('server-applyPatchApproval'), { decision: { denied: { rejection: 'The user declined this request.' } } });
+  assert.deepEqual(replyTo('server-item/fileChange/requestApproval'), { decision: 'decline' });
+  assert.deepEqual(replyTo('server-item/tool/requestUserInput'), { answers: { color: { answers: ['blue'] } } });
+  const unknownReply = fake.replies.find(r => r.id === 'server-unknown/request');
+  assert.equal(unknownReply.error.code, -32601, 'unknown server requests are failed at once');
+  assert.equal((await get('/api/sessions/one/history')).body.prompts.length, 0);
+  await pause(80);
+  assert.equal(promptStream.events.filter(e => e.name === 'prompt_resolved').length, 5);
+  promptStream.close();
+  // History pages: newest first page, then strictly older pages via before=<oldest time>.
+  const fullHistory = (await get('/api/sessions/one/history?limit=550')).body;
+  assert.equal(fullHistory.has_more, false);
+  assert.ok(fullHistory.history.length > 6);
+  assert.equal((await get('/api/sessions/one/history')).body.history.length, Math.min(50, fullHistory.history.length), 'default page is 50');
+  let pageRoute = '/api/sessions/one/history?limit=3', walked = [], guard = 0;
+  for (;;) {
+    const page = (await get(pageRoute)).body;
+    assert.ok(page.history.length >= 1);
+    walked = [...page.history, ...walked];
+    if (!page.has_more) break;
+    assert.ok(++guard < 100);
+    pageRoute = `/api/sessions/one/history?limit=3&before=${encodeURIComponent(page.history[0].time)}`;
+  }
+  assert.deepEqual(walked.map(e => [e.role, e.time, e.text]), fullHistory.history.map(e => [e.role, e.time, e.text]), 'pages join into the full history');
+  assert.equal((await get('/api/sessions/one/history?before=nope')).status, 400);
   for (const [message, error] of [['__failed__', 'recorded failure'], ['__interrupted__', 'Codex turn interrupted']]) {
     const result = await post('one', message);
     assert.equal(result.status, 500);

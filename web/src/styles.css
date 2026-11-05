@@ -798,3 +798,41 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .model-ico { flex: none; color: var(--muted); opacity: .8; align-self: flex-start; margin-top: 2px; }
 .model-item[aria-checked="true"] .model-ico { color: var(--accent); opacity: 1; }
 .model-chip.on::before { content: ''; }
+
+/* ---------- approval / question cards (pending server requests of the running turn) ---------- */
+.spin { animation: spin .8s linear infinite; }
+.prompt-card { margin: 10px 0 14px; padding: 12px 14px 12px; border: 1px solid var(--accent-line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-card); animation: prompt-in .22s ease-out; }
+@keyframes prompt-in { from { opacity: 0; transform: translateY(4px); } }
+.prompt-head { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); }
+.prompt-ico { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); flex: none; }
+.prompt-wait { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.prompt-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: prompt-pulse 1.4s ease-in-out infinite; }
+@keyframes prompt-pulse { 50% { opacity: .3; } }
+.prompt-reason { margin: 8px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-code { margin: 10px 0 0; padding: 9px 11px; border-radius: var(--r); background: var(--bg-subtle); border: 1px solid var(--line); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.prompt-sigil { color: var(--faint); user-select: none; }
+.prompt-meta { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-files { list-style: none; margin: 10px 0 0; padding: 0; border: 1px solid var(--line); border-radius: var(--r); max-height: 180px; overflow: auto; }
+.prompt-files li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.prompt-files li + li { border-top: 1px solid var(--line); }
+.prompt-tag { flex: none; padding: 0 6px; height: 18px; line-height: 18px; border-radius: 5px; background: var(--bg-muted); color: var(--muted); font: 500 10.5px var(--sans, inherit); }
+.prompt-q { margin-top: 10px; }
+.prompt-q-head { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); text-transform: uppercase; }
+.prompt-q-text { margin-top: 2px; font-size: 13.5px; color: var(--ink); line-height: 1.55; white-space: pre-wrap; }
+.prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.prompt-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; min-height: 30px; padding: 5px 11px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); color: var(--ink); font-size: 12.5px; text-align: left; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
+.prompt-chip:hover:not(:disabled) { background: var(--bg-hover); }
+.prompt-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.prompt-chip:disabled { opacity: .5; cursor: not-allowed; }
+.prompt-chip-sub { font-size: 11px; color: var(--muted); }
+.prompt-input { width: 100%; height: 32px; margin-top: 8px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); color: var(--ink); font-size: 13px; outline: 0; }
+.prompt-input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.prompt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.prompt-actions .spacer { flex: 1; }
+.btn.prompt-stop { margin-left: auto; }
+.btn.prompt-stop:hover:not(:disabled) { color: var(--red); background: var(--red-soft); }
+
+/* ---------- older history (scroll to top) ---------- */
+.older-row { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; margin-bottom: 4px; font-size: 12px; color: var(--faint); }
+.older-row button { border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.older-row button:hover { color: var(--ink); background: var(--bg-hover); }

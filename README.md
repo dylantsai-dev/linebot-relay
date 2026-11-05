@@ -175,7 +175,8 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 | `DELETE` | `/api/sessions/:key` | 👑 | 删除会话 |
 | `GET` | `/api/sessions/:key/webhook` | 👑 | 查看会话 Webhook 地址和密钥 |
 | `POST` | `/api/sessions/:key/webhook/rotate` | 👑 | 重置密钥（地址不变，旧密钥立即失效） |
-| `GET` | `/api/sessions/:key/history` | 已授权 | 历史消息（含附件） |
+| `GET` | `/api/sessions/:key/history` | 已授权 | 历史消息（含附件），分页：`limit`（默认 50）、`before=<ISO 时间>`，返回 `has_more` 和待处理的 `prompts` |
+| `POST` | `/api/sessions/:key/prompts/:id` | 已授权 | 回答审批 / 提问卡片：`{decision}` 或 `{answers}` |
 | `GET` | `/api/sessions/:key/stream` | 已授权 | 流式推送（快照 + 增量，刷新后可接上运行中的回合） |
 | `GET` | `/api/sessions/:key/queue` | 已授权 | 当前队列（运行中 / 已引导 / 排队中） |
 | `DELETE` | `/api/sessions/:key/queue/:id` | 已授权 | 撤回还没发出的排队消息 |

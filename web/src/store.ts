@@ -1,6 +1,6 @@
 import { reactive, ref, computed, watch } from 'vue'
 import { fileSize } from './lib/format'
-import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode } from './lib/types'
+import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode, Prompt } from './lib/types'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 // Upload limits come from the server (/api/whoami); these are the fallbacks.
@@ -39,6 +39,11 @@ export const state = reactive({
   /** Send mode while a turn is running: 排队 (default) or 引导. */
   sendMode: 'queue' as SendMode,
   stopping: false,
+  /** Pending approval / question cards of the selected session. */
+  prompts: [] as Prompt[],
+  /** Older history exists above the loaded messages; loadOlder() fetches the next page. */
+  hasMore: false,
+  loadingOlder: false,
   /** Bumped to ask SessionsView to open the 关联会话 dialog (from the sidebar). */
   linkRequest: 0,
 })
@@ -146,7 +151,7 @@ export function logout(revoke = true) {
   stopStream()
   if (state.selected) setHashSession('')
   historyCache.clear()
-  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null, queue: [], sendMode: 'queue', stopping: false })
+  Object.assign(state, { token: '', authed: false, me: null, sessions: [], sessionsLoaded: false, sessionsError: '', selected: '', history: [], threadRunning: false, historyError: '', drawer: false, live: null, lightbox: null, queue: [], sendMode: 'queue', stopping: false, prompts: [], hasMore: false, loadingOlder: false })
   state.drafts.clear(); state.pending.clear()
   historySig = ''
 }
@@ -177,7 +182,11 @@ export async function refreshSessions() {
 }
 
 // Last history seen per session, so switching back shows it at once (then refreshes) instead of a skeleton.
-const historyCache = new Map<string, { history: HistoryEntry[]; running: boolean; sig: string }>()
+const historyCache = new Map<string, { history: HistoryEntry[]; running: boolean; sig: string; hasMore: boolean; olderMore: boolean | null }>()
+const HISTORY_PAGE = 50
+/** has_more of the last older page fetched for the selected session (null: only the newest page is loaded). */
+let olderMore: boolean | null = null
+const timeOf = (entry?: HistoryEntry) => { const t = Date.parse(entry?.time || ''); return Number.isFinite(t) ? t : -Infinity }
 export async function selectSession(key: string) {
   if (state.selected !== key) {
     const cached = historyCache.get(key)
@@ -185,6 +194,10 @@ export async function selectSession(key: string) {
     setHashSession(key)
     state.history = cached?.history || []
     state.threadRunning = cached?.running || false
+    state.hasMore = cached?.hasMore || false
+    state.loadingOlder = false
+    state.prompts = []
+    olderMore = cached?.olderMore ?? null
     state.historyError = ''
     state.live = null
     state.queue = []
@@ -206,22 +219,82 @@ let historySig = ''
 export async function refreshHistory(key: string) {
   const own = epoch
   let data: HistoryResponse
-  try { data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=200`) }
+  try { data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=${HISTORY_PAGE}`) }
   catch (error) { if (draftMissing(key, error)) { data = { key, session: key, history: [], source: 'local', running: false } } else throw error }
   if (state.selected !== key || own !== epoch) return
   state.historyError = ''
   state.historySource = data.source
   setQueue(data.queue || [])
+  setPrompts(data.prompts || [])
   // Polling fallback for the live turn when the stream is not connected.
   if (!state.streaming) setLive(data.running && data.live ? data.live : null)
   else if (!data.running && state.live && Date.now() - streamTouched > 5000) setLive(null)
   // Diff by signature: identical polls leave reactive state (and the DOM) untouched.
-  const sig = JSON.stringify([data.history, !!data.running])
+  const sig = JSON.stringify([data.history, !!data.running, !!data.has_more])
   if (sig === historySig) return
   historySig = sig
-  state.history = data.history
+  // Keep older pages the user already scrolled up to: everything strictly older than the newest page,
+  // as long as what is shown still overlaps it (otherwise there could be a gap; start over).
+  const first = timeOf(data.history[0])
+  const overlaps = data.history.length > 0 && state.history.some(e => timeOf(e) >= first)
+  const kept = overlaps && olderMore !== null ? state.history.filter(e => timeOf(e) < first) : []
+  if (!kept.length) olderMore = null
+  state.history = kept.length ? [...kept, ...data.history] : data.history
+  state.hasMore = olderMore ?? !!data.has_more
   state.threadRunning = !!data.running
-  historyCache.set(key, { history: data.history, running: !!data.running, sig })
+  historyCache.set(key, { history: state.history, running: !!data.running, sig, hasMore: state.hasMore, olderMore })
+}
+/** Fetch the page of history just before the oldest loaded message and prepend it. */
+export async function loadOlder() {
+  const key = state.selected, oldest = state.history[0]
+  if (!key || !oldest?.time || !state.hasMore || state.loadingOlder) return
+  const own = epoch
+  state.loadingOlder = true
+  try {
+    const data = await api<HistoryResponse>(`/api/sessions/${keyPath(key)}/history?limit=${HISTORY_PAGE}&before=${encodeURIComponent(oldest.time)}`)
+    if (state.selected !== key || own !== epoch || state.history[0] !== oldest) return
+    const older = data.history.filter(e => timeOf(e) < timeOf(oldest))
+    olderMore = !!data.has_more
+    state.history = [...older, ...state.history]
+    state.hasMore = olderMore
+    const cached = historyCache.get(key)
+    if (cached) historyCache.set(key, { ...cached, history: state.history, hasMore: state.hasMore, olderMore })
+  } catch (e) {
+    if (state.selected === key) toast((e as Error).message || '加载失败')
+  } finally {
+    if (state.selected === key) state.loadingOlder = false
+  }
+}
+
+/* ---------- approval / question cards ---------- */
+let promptsSig = ''
+/** Cards answered here: an in-flight poll must not bring them back. */
+const answeredPrompts = new Set<string>()
+function setPrompts(prompts: Prompt[]) {
+  prompts = prompts.filter(p => !answeredPrompts.has(p.id))
+  const sig = JSON.stringify(prompts)
+  if (sig === promptsSig && state.prompts.length === prompts.length) return
+  promptsSig = sig
+  state.prompts = prompts
+}
+function dropPrompt(id: string) {
+  if (state.prompts.some(p => p.id === id)) setPrompts(state.prompts.filter(p => p.id !== id))
+}
+/** Answer a card: { decision } for approvals, { answers } for questions. Resolves true when it went through. */
+export async function answerPrompt(id: string, body: { decision?: string; answers?: Record<string, string | string[]> }) {
+  const key = state.selected
+  if (!key) return false
+  try {
+    await api(`/api/sessions/${keyPath(key)}/prompts/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(body) })
+    answeredPrompts.add(id)
+    if (state.selected === key) dropPrompt(id)
+    return true
+  } catch (e) {
+    const status = (e as ApiError).status
+    if (status === 404 || status === 409) { answeredPrompts.add(id); if (state.selected === key) dropPrompt(id); toast('该请求已处理或已失效') }
+    else toast((e as Error).message || '提交失败')
+    return false
+  }
 }
 
 /* ---------- Codex threads: the sidebar links existing Codex sessions ---------- */
@@ -286,7 +359,7 @@ export async function deleteSession(key: string) {
   if (state.sessions.some(s => s.key === key) || state.pending.has(key)) await api(`/api/sessions/${keyPath(key)}`, { method: 'DELETE' })
   state.drafts.delete(key)
   discardAttachments(key)
-  if (state.selected === key) { setHashSession(''); state.selected = ''; state.history = []; state.threadRunning = false; state.live = null; state.queue = []; historySig = ''; stopStream() }
+  if (state.selected === key) { setHashSession(''); state.selected = ''; state.history = []; state.threadRunning = false; state.live = null; state.queue = []; state.prompts = []; state.hasMore = false; historySig = ''; stopStream() }
   await refreshSessions()
 }
 
@@ -487,7 +560,12 @@ function onStreamEvent(key: string, name: string, data: any) {
   if (name === 'snapshot') {
     setLive(data.live || null)
     if (data.queue) setQueue(data.queue)
+    if (Array.isArray(data.prompts)) setPrompts(data.prompts)
     if (data.running) state.threadRunning = true
+  } else if (name === 'prompt') {
+    if (data.prompt?.id) setPrompts([...state.prompts.filter(p => p.id !== data.prompt.id), data.prompt])
+  } else if (name === 'prompt_resolved') {
+    dropPrompt(data.id)
   } else if (name === 'turn') {
     if (data.status === 'started') {
       setLive({ turnId: data.turnId || '', startedAt: new Date().toISOString(), items: [] }); state.threadRunning = true
@@ -498,6 +576,7 @@ function onStreamEvent(key: string, name: string, data: any) {
       // Keep the live answer on screen until the final message is in history: swapping in the same
       // tick avoids the blank gap + fade-in flash at the end of a turn.
       const ended = liveBuf
+      setPrompts([])
       historySig = ''
       void refreshHistory(key).catch(() => {}).finally(() => { if (state.selected === key && liveBuf === ended) setLive(null) })
       void refreshSessions().catch(() => {})

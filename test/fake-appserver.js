@@ -20,6 +20,13 @@ class FakeAppServer {
     if (!this.connections.has(send)) this.connections.set(send, new Set());
     const subscriptions = this.connections.get(send);
     const { id, method, params } = message;
+    // A client reply to one of our server requests (approval / question).
+    if (!method && id !== undefined && (message.result !== undefined || message.error !== undefined)) {
+      (this.replies ||= []).push(message);
+      const waiting = this.awaiting?.get(id);
+      if (waiting) { this.awaiting.delete(id); waiting(message); }
+      return;
+    }
     const respond = result => send({ id, result });
     const notify = (method, params) => {
       for (const [client, subscribed] of this.connections) {
@@ -93,9 +100,26 @@ class FakeAppServer {
           notify('turn/completed', { threadId, turn });
           notify('thread/status/changed', { threadId, status: { type: 'idle' } });
         };
-        if (text === '__approval__') {
-          for (const method of ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'applyPatchApproval', 'execCommandApproval', 'item/tool/requestUserInput', 'unknown/request']) {
-            send({ id: `server-${method}`, method, params: { threadId, turnId } });
+        const approvals = text === '__approval__';
+        if (approvals) {
+          // Like Codex: each request blocks the turn until the client replies; then serverRequest/resolved.
+          const requests = {
+            'item/commandExecution/requestApproval': { threadId, turnId, itemId: `cmd-${turnId}`, startedAtMs: Date.now(), command: "/bin/bash -lc 'rm -rf build'", cwd: '/tmp/work', reason: 'Codex wants to clean the build' },
+            'item/fileChange/requestApproval': { threadId, turnId, itemId: `file-${turnId}`, startedAtMs: Date.now(), reason: 'edit files' },
+            applyPatchApproval: { conversationId: threadId, callId: 'call-1', fileChanges: { 'src/a.js': { type: 'update', unified_diff: '' }, 'src/b.js': { type: 'add', content: 'x' } } },
+            execCommandApproval: { conversationId: threadId, callId: 'call-2', command: ['git', 'push'], cwd: '/tmp/work', parsedCmd: [] },
+            'item/tool/requestUserInput': { threadId, turnId, itemId: `ask-${turnId}`, isBlocking: true, questions: [{ id: 'color', header: '颜色', question: 'Which color?', options: [{ label: 'red', description: 'warm' }, { label: 'blue', description: 'cool' }], isOther: true, isSecret: false }] },
+            'unknown/request': { threadId, turnId },
+          };
+          let open = Object.keys(requests).length;
+          this.awaiting ||= new Map();
+          for (const [method, request] of Object.entries(requests)) {
+            const serverId = `server-${method}`;
+            this.awaiting.set(serverId, () => {
+              notify('serverRequest/resolved', { threadId, requestId: serverId });
+              if (--open === 0) complete();
+            });
+            send({ id: serverId, method, params: request });
           }
         }
         if (text === '__stream__') {
@@ -117,7 +141,7 @@ class FakeAppServer {
         } else if (text.startsWith('__hold__') || this.holdAll) {
           // Stays running until the test releases it (or it is interrupted).
           (this.held ||= new Map()).set(threadId, () => { if (turn.status === 'inProgress') complete(); });
-        } else if (text !== '__timeout__' && text !== '__late__' && text !== '__stream__') complete();
+        } else if (!approvals && text !== '__timeout__' && text !== '__late__' && text !== '__stream__') complete();
         if (text === '__late__' || text === '__completed_late__') {
           const timer = setTimeout(() => { this.timers.delete(timer); respond({ turn }); }, 150);
           this.timers.add(timer);

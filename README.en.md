@@ -175,7 +175,8 @@ On first visit with no admin yet, log in with `WEBHOOK_TOKEN` and create one (or
 | `DELETE` | `/api/sessions/:key` | 👑 | Delete a session |
 | `GET` | `/api/sessions/:key/webhook` | 👑 | View the thread's webhook URL and key |
 | `POST` | `/api/sessions/:key/webhook/rotate` | 👑 | Reset the key (same URL, old key stops working) |
-| `GET` | `/api/sessions/:key/history` | Granted | Message history (with attachments) |
+| `GET` | `/api/sessions/:key/history` | Granted | Message history (with attachments); paged with `limit` (default 50) and `before=<ISO time>`, returns `has_more` and pending `prompts` |
+| `POST` | `/api/sessions/:key/prompts/:id` | Granted | Answer an approval / question card: `{decision}` or `{answers}` |
 | `GET` | `/api/sessions/:key/stream` | Granted | Live stream (snapshot + deltas, resumes running turns) |
 | `GET` | `/api/sessions/:key/queue` | Granted | Current queue (running / steered / queued) |
 | `DELETE` | `/api/sessions/:key/queue/:id` | Granted | Withdraw a queued message not yet sent |
