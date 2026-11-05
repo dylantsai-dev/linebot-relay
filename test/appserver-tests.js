@@ -57,7 +57,7 @@ function loadRelay() {
     console: { log() {}, error: console.error },
     process: { env },
     require: name => {
-      if (name === './lib/appserver') return { AppServer: TestClient };
+      if (name === './lib/appserver') return { AppServer: TestClient, summarizeItem: require('../lib/appserver').summarizeItem };
       if (name === 'node:http') return { createServer: callback => { handler = callback; return { listen() {} }; } };
       if (name === 'node:child_process') return { spawn() { spawnCount++; throw new Error('EXEC_FALLBACK'); } };
       if (name === './lib/attachments') return require('../lib/attachments');

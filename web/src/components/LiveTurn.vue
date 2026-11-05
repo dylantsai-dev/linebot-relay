@@ -1,25 +1,38 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { LiveTurn } from '../lib/types'
+import type { LiveItem, LiveTurn } from '../lib/types'
 import { renderMarkdown, splitBlocks } from '../lib/markdown'
+import { workedFor } from '../lib/format'
 import { state } from '../store'
 import Icon from './Icon.vue'
+import TurnSteps from './TurnSteps.vue'
 
-// The in-progress turn: activity lines (commands, tools, searches, edits), the streaming answer
-// rendered progressively, and a typing indicator. Deltas are already throttled by the store.
+// The in-progress turn, laid out exactly like the finished message (head, rule, steps, answer,
+// actions row) so the swap to history at the end moves nothing.
 const props = defineProps<{ turn: LiveTurn | null; elapsed?: number }>()
 const items = computed(() => props.turn?.items || [])
-const answer = computed(() => {
-  const texts = items.value.filter(i => i.kind === 'text' && i.text)
-  return texts.find(i => i.phase === 'final_answer') || texts.at(-1) || null
+const texts = computed(() => items.value.filter(i => i.kind === 'text'))
+const answer = computed<LiveItem | null>(() => {
+  const final = texts.value.find(i => i.phase === 'final_answer')
+  if (final) return final
+  // Older servers send no phase: treat the last un-phased message as the answer.
+  const last = texts.value.at(-1)
+  return last && !last.phase ? last : null
 })
-const commentary = computed(() => items.value.filter(i => i.kind === 'text' && i.text && i !== answer.value).slice(-3))
-const activity = computed(() => items.value.filter(i => ['command', 'tool', 'search', 'file', 'reasoning', 'plan'].includes(i.kind)).slice(-6))
+const steps = computed(() => items.value.filter(i => i !== answer.value && ['text', 'command', 'tool', 'search', 'file'].includes(i.kind) && (i.kind !== 'text' || !!i.text?.trim())))
 const images = computed(() => items.value.filter(i => i.kind === 'image' && i.url))
-// Typewriter: reveal the answer at a steady per-frame pace that speeds up with the backlog, so
-// ~10-character network chunks become smooth character-by-character output.
+const zoom = (src: string) => (state.lightbox = { src, alt: '生成的图片' })
+const head = computed(() => {
+  const t = props.elapsed !== undefined ? ` ${workedFor(props.elapsed)}` : ''
+  if (answer.value?.text) return `正在输出${t}`
+  const busy = [...steps.value].reverse().find(s => s.kind !== 'text' && !s.done)
+  return `${busy ? '正在工作' : '正在思考'}${t}`
+})
+const open = ref(true)
+
+// Typewriter: reveal the answer at a steady per-frame pace that speeds up with the backlog.
 const target = computed(() => answer.value?.text || '')
-const shown = ref(target.value.length) // joined mid-turn: show what exists, animate only new text
+const shown = ref(target.value.length)
 let raf = 0, answerId = answer.value?.id
 function tick() {
   raf = 0
@@ -27,7 +40,7 @@ function tick() {
   if (shown.value >= total) { shown.value = total; return }
   let next = Math.min(total, shown.value + Math.max(1, Math.ceil((total - shown.value) / 10)))
   const code = target.value.charCodeAt(next - 1)
-  if (code >= 0xd800 && code <= 0xdbff && next < total) next++ // never split a surrogate pair
+  if (code >= 0xd800 && code <= 0xdbff && next < total) next++
   shown.value = next
   if (next < total) raf = requestAnimationFrame(tick)
 }
@@ -38,34 +51,20 @@ const blocks = computed(() => {
   const parts = splitBlocks(target.value.slice(0, shown.value))
   return parts.map((b, i) => renderMarkdown(b, i === parts.length - 1))
 })
-const html = computed(() => blocks.value.length > 0)
-const label = (kind: string) => ({ command: '命令', tool: '工具', search: '搜索', file: '修改', reasoning: '思考', plan: '计划' } as Record<string, string>)[kind] || kind
-const icon = (kind: string) => ({ command: 'terminal', file: 'file-code', search: 'search', tool: 'braces', reasoning: 'sparkles', plan: 'queue' } as Record<string, string>)[kind] || 'activity'
-const line = (i: any) => (i.kind === 'reasoning' || i.kind === 'plan' ? (i.text || '').replace(/\s+/g, ' ').replace(/\*\*/g, '').trim().slice(-140) : i.title || '')
-const tail = (text?: string) => (text || '').trimEnd().split('\n').slice(-3).join('\n')
-const zoom = (src: string) => (state.lightbox = { src, alt: '生成的图片' })
 </script>
 <template>
   <article class="msg assistant live-turn" aria-live="polite">
-    <div class="msg-avatar assistant working" aria-hidden="true"><Icon name="sparkles" :size="15" :stroke="1.6" /></div>
     <div class="msg-main">
-      <ul v-if="!html && (activity.length || commentary.length)" class="activity">
-        <li v-for="c in commentary" :key="c.id" class="act commentary">{{ (c.text || '').replace(/\s+/g, ' ').slice(0, 200) }}</li>
-        <li v-for="a in activity" :key="a.id" class="act" :class="[a.kind, { done: a.done, failed: a.status === 'failed' || (a.exitCode ?? 0) !== 0 }]">
-          <span class="act-icon"><Icon :name="icon(a.kind)" :size="13" /></span>
-          <span class="act-kind">{{ label(a.kind) }}</span>
-          <code class="act-title">{{ line(a) || '…' }}</code>
-          <span class="act-state"><template v-if="!a.done"><span class="spinner xs" />运行中</template><template v-else-if="a.exitCode != null && a.exitCode !== 0">退出 {{ a.exitCode }}</template><Icon v-else name="check" :size="13" /></span>
-          <pre v-if="a.kind === 'command' && a.output && !a.done" class="act-output">{{ tail(a.output) }}</pre>
-        </li>
-      </ul>
-      <div v-if="html" class="msg-body md streaming"><div v-for="(b, i) in blocks" :key="i" class="md-block" v-html="b" /></div>
+      <button type="button" class="turn-head" :disabled="!steps.length" :aria-expanded="open" @click="open = !open">
+        <span class="shimmer">{{ head }}</span><Icon v-if="steps.length" name="chevron" :size="13" class="turn-chev" :class="{ open }" />
+      </button>
+      <div class="turn-rule" />
+      <div class="turn-steps" :class="{ open: open && steps.length }"><div><TurnSteps v-if="steps.length" :steps="steps" live /></div></div>
+      <div v-if="blocks.length" class="msg-body md streaming"><div v-for="(b, i) in blocks" :key="i" class="md-block" v-html="b" /></div>
       <div v-if="images.length" class="gen-images">
         <button v-for="img in images" :key="img.id" type="button" class="gen-image" @click="zoom(img.url!)"><img :src="img.url" alt="生成的图片" loading="lazy" referrerpolicy="no-referrer"></button>
       </div>
-      <!-- Same box as the final message footer, so the swap to the finished message does not move anything. -->
-      <div v-if="html" class="msg-meta live-meta"><span class="who">Codex</span><span class="meta mono">输出中<template v-if="elapsed !== undefined"> · {{ elapsed }}s</template></span></div>
-      <div v-if="!html" class="typing"><span>{{ html ? '输出中' : activity.length ? '工作中' : '思考中' }}</span><span class="dots"><i /><i /><i /></span><span v-if="elapsed !== undefined" class="mono">{{ elapsed }}s</span><span class="badge live">实时</span></div>
+      <div class="msg-actions" aria-hidden="true" />
     </div>
   </article>
 </template>

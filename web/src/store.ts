@@ -354,6 +354,15 @@ export async function cancelQueued(id: string) {
   } catch (error) { toast((error as Error).message) }
   void refreshSessions().catch(() => {})
 }
+/** Turn a queued message into a steer of the running turn (the queue card's 引导 button). */
+export async function steerQueued(id: string) {
+  const key = state.selected
+  try {
+    const r = await api<{ status: string; steer_fallback?: string }>(`/api/sessions/${keyPath(key)}/queue/${id}/steer`, { method: 'POST' })
+    toast(r.status === 'steered' ? '已引导到当前回合' : r.steer_fallback === 'no_active_turn' ? '当前没有运行中的回合，仍在排队' : '无法引导当前回合，仍在队首排队', r.status === 'steered')
+  } catch (error) { toast((error as Error).message) }
+  void refreshSessions().catch(() => {})
+}
 /** Stop the running turn (turn/interrupt); queued messages then continue. */
 export async function stopTurn() {
   const key = state.selected

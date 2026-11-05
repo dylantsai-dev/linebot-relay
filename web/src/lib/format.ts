@@ -12,3 +12,8 @@ export function uptime(seconds: number) {
   const d = Math.floor(seconds / 86400), h = Math.floor((seconds % 86400) / 3600), m = Math.floor((seconds % 3600) / 60)
   return d ? `${d}天 ${h}时` : h ? `${h}时 ${m}分` : `${m}分`
 }
+/** Codex App style: 7秒 / 2分 5秒 / 1小时 3分. */
+export function workedFor(seconds: number) {
+  const s = Math.max(0, Math.round(seconds)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60
+  return h ? `${h}小时 ${m}分` : m ? `${m}分 ${r}秒` : `${r}秒`
+}

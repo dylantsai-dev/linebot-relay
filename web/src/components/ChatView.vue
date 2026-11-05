@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink } from '../store'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
 import { fileSize } from '../lib/format'
@@ -23,7 +23,8 @@ const running = computed(() => !!pending.value || busy.value)
 const queued = computed(() => state.queue.filter(e => e.status === 'queued'))
 /** Show the mode switch whenever a new message would not start right away. */
 const showMode = computed(() => busy.value || queued.value.length > 0)
-const mode = computed(() => (showMode.value ? state.sendMode : 'queue'))
+// Codex-style: a message sent while a turn runs always queues; the queue card's 引导 button steers it.
+const mode = computed(() => 'queue' as const)
 
 // Stable keys so unchanged messages are never re-rendered between polls.
 const items = computed(() => {
@@ -109,7 +110,7 @@ const who = computed(() => state.me?.user?.username || '')
 const menuAnchor = ref<HTMLElement | null>(null)
 function toggleCopyMenu(e: MouseEvent) { const el = e.currentTarget as HTMLElement; menuAnchor.value = menuAnchor.value === el ? null : el }
 function closeCopyMenu(focus: boolean) { const a = menuAnchor.value; menuAnchor.value = null; if (focus) a?.focus({ preventScroll: true }) }
-const sendLabel = computed(() => (showMode.value ? (mode.value === 'steer' ? '引导当前回合' : '排队发送') : '发送') + ' (Enter)')
+const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (Enter)')
 </script>
 <template>
   <section class="chat" :class="{ dragging, fresh }" @dragenter="dragEnter" @dragover="dragOver" @dragleave="dragLeave" @drop="drop">
@@ -122,7 +123,7 @@ const sendLabel = computed(() => (showMode.value ? (mode.value === 'steer' ? '�
           <span v-else class="id-pill mono muted">{{ selectedSession?.draft ? '首条消息后创建' : '未绑定' }}</span>
         </div>
         <span class="spacer" />
-        <Transition name="fade"><span v-if="running" class="status-pill" :class="{ live: state.streaming }" :data-tip="state.streaming ? '通过 SSE 实时推送' : '正在运行'"><span class="dot running" />运行中<template v-if="state.streaming"> · 实时</template></span></Transition>
+        <Transition name="fade"><span v-if="running" class="status-pill" :class="{ live: state.streaming }" :data-tip="state.streaming ? '通过 SSE 实时推送' : '正在运行'"><span class="dot running" />运行中</span></Transition>
         <span v-if="queued.length" class="src-pill" data-tip="当前回合结束后依次发送"><Icon name="clock" :size="12" />排队 {{ queued.length }}</span>
         <span v-if="state.historySource === 'local'" class="src-pill" data-tip="Codex App 未连接，显示中继本地记录">本地记录</span>
         <button v-if="busy && !selectedSession?.draft" class="btn sm stop-btn" data-tip="停止当前回合（turn/interrupt）" :disabled="state.stopping" @click="stopTurn"><span v-if="state.stopping" class="spinner sm" /><Icon v-else name="stop" :size="12" :stroke="2.4" />{{ state.stopping ? '停止中…' : '停止' }}</button>
@@ -170,17 +171,20 @@ const sendLabel = computed(() => (showMode.value ? (mode.value === 'steer' ? '�
     </div>
 
     <form v-if="state.selected" class="composer" @submit.prevent="submit" @paste="onPaste">
-      <div class="composer-card" :class="{ steer: showMode && mode === 'steer' }">
-        <TransitionGroup v-if="queued.length" tag="ul" name="list" class="queue-list" aria-label="排队中的消息">
-          <li v-for="(q, i) in queued" :key="q.id" class="queue-row" :title="queueTitle(q)">
-            <Icon name="clock" :size="13" /><span class="queue-pos">{{ i + 1 }}</span>
-            <span class="queue-text">{{ q.text }}</span>
-            <span v-if="q.attachments.length" class="queue-meta"><Icon name="paperclip" :size="11" />{{ q.attachments.length }}</span>
-            <span v-if="q.fallback === 'steer_rejected'" class="queue-meta warn">引导未生效</span>
-            <span v-if="q.user" class="queue-meta">{{ q.user }}</span>
-            <button v-if="canWithdraw(q)" type="button" class="chip-x" :aria-label="`撤回排队消息 ${i + 1}`" data-tip="撤回（尚未发送）" @click="cancelQueued(q.id)"><Icon name="x" :size="12" /></button>
-          </li>
-        </TransitionGroup>
+      <TransitionGroup v-if="queued.length" tag="ul" name="list" class="queue-stack" aria-label="排队中的消息">
+        <li v-for="(q, i) in queued" :key="q.id" class="queue-card" :title="queueTitle(q)">
+          <Icon name="list-end" :size="15" class="queue-ico" />
+          <span class="queue-text">{{ q.text || (q.attachments.length ? `${q.attachments.length} 个附件` : '') }}</span>
+          <span v-if="q.attachments.length && q.text" class="queue-meta"><Icon name="paperclip" :size="11" />{{ q.attachments.length }}</span>
+          <span v-if="q.fallback === 'steer_rejected'" class="queue-meta warn">引导未生效</span>
+          <span v-if="q.user && q.user !== state.me?.user?.username" class="queue-meta">{{ q.user }}</span>
+          <template v-if="canWithdraw(q)">
+            <button v-if="busy" type="button" class="queue-act" data-tip="引导：插入正在运行的回合" @click="steerQueued(q.id)"><Icon name="steer-to" :size="14" />引导</button>
+            <button type="button" class="queue-act icon" :aria-label="`撤回排队消息 ${i + 1}`" data-tip="撤回（尚未发送）" @click="cancelQueued(q.id)"><Icon name="trash" :size="14" /></button>
+          </template>
+        </li>
+      </TransitionGroup>
+      <div class="composer-card">
         <TransitionGroup v-if="drafts.length" tag="div" name="list" class="draft-files">
           <span v-for="f in drafts" :key="f.id" class="chip draft" :title="f.name">
             <img v-if="f.preview" :src="f.preview" alt=""><span v-else class="chip-icon"><Icon name="file-text" :size="15" /></span>
@@ -188,22 +192,16 @@ const sendLabel = computed(() => (showMode.value ? (mode.value === 'steer' ? '�
             <button type="button" class="chip-x" :aria-label="`移除 ${f.name}`" data-tip="移除" @click="removeFile(state.selected, f.id)"><Icon name="x" :size="12" /></button>
           </span>
         </TransitionGroup>
-        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" :placeholder="showMode ? (mode === 'steer' ? '补充说明，插入正在运行的回合…' : '排队，当前回合结束后发送…') : '给 Codex 发消息…'" @input="grow" @keydown="onKey" />
+        <textarea ref="textarea" v-model="text" rows="1" aria-label="消息" :placeholder="busy ? '排队，当前回合结束后发送…' : '给 Codex 发消息…'" @input="grow" @keydown="onKey" />
         <div class="composer-tools">
           <input ref="fileInput" type="file" multiple hidden @change="onPick">
           <button type="button" class="tool-btn" :data-tip="`添加附件 · 任意类型，最多 ${limits.files} 个，每个 ≤ ${fileSize(limits.fileBytes)}`" aria-label="添加附件" :disabled="drafts.length >= limits.files" @click="fileInput?.click()"><Icon name="plus" :size="17" /></button>
           <span v-if="drafts.length" class="tool-count">{{ drafts.length }}/{{ limits.files }}</span>
-          <Transition name="fade">
-            <div v-if="showMode" class="mode-switch" role="radiogroup" aria-label="发送方式">
-              <button type="button" role="radio" :aria-checked="state.sendMode === 'queue'" :class="{ on: state.sendMode === 'queue' }" data-tip="排队：当前回合结束后自动发送，发送前可撤回" @click="state.sendMode = 'queue'"><Icon name="queue" :size="13" />排队</button>
-              <button type="button" role="radio" :aria-checked="state.sendMode === 'steer'" :class="{ on: state.sendMode === 'steer' }" data-tip="引导：插入正在运行的回合（turn/steer）" @click="state.sendMode = 'steer'"><Icon name="steer" :size="13" />引导</button>
-            </div>
-          </Transition>
           <span class="spacer" />
-          <button class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else :name="mode === 'steer' ? 'steer' : 'send'" :size="16" :stroke="2.2" /></button>
+          <button class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!!pending || (!text.trim() && !drafts.length)"><span v-if="pending" class="spinner sm inv" /><Icon v-else name="send" :size="16" :stroke="2.2" /></button>
         </div>
       </div>
-      <div class="hint"><span><kbd class="kbd">Enter</kbd> {{ showMode ? (mode === 'steer' ? '引导' : '排队') : '发送' }} · <kbd class="kbd">Shift</kbd>+<kbd class="kbd">Enter</kbd> 换行</span><span class="hint-files">可粘贴或拖入任意文件 · 单个 ≤ {{ fileSize(limits.fileBytes) }}</span></div>
+      <div class="hint"><span><kbd class="kbd">Enter</kbd> {{ busy ? '排队' : '发送' }} · <kbd class="kbd">Shift</kbd>+<kbd class="kbd">Enter</kbd> 换行</span><span class="hint-files">可粘贴或拖入任意文件 · 单个 ≤ {{ fileSize(limits.fileBytes) }}</span></div>
     </form>
     <Transition name="fade">
       <div v-if="dragging" class="drop-overlay"><div class="drop-card"><Icon name="upload" :size="26" /><strong>松开以添加附件</strong><span>任意类型 · 最多 {{ limits.files }} 个</span></div></div>

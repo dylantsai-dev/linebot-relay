@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { URL } = require('node:url');
-const { AppServer } = require('./lib/appserver');
+const { AppServer, summarizeItem } = require('./lib/appserver');
 const { readRequest, prepareAttachments, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
 const { Media, rewriteMarkdown, itemImages, localPath } = require('./lib/media');
@@ -182,6 +182,20 @@ function unixTime(seconds) {
   const date = new Date(Number(seconds) * 1000);
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
+const STEP_KINDS = new Set(['text', 'command', 'tool', 'search', 'file']);
+function turnSteps(items, answers) {
+  const steps = [];
+  for (const raw of items) {
+    if (raw.type === 'userMessage' || answers.has(raw)) continue;
+    const step = summarizeItem(raw);
+    if (!step || !STEP_KINDS.has(step.kind) || (step.kind === 'text' && !step.text.trim())) continue;
+    delete step.phase;
+    if (step.text && step.text.length > 4000) step.text = `${step.text.slice(0, 4000)}…`;
+    if (step.output) step.output = step.output.slice(-1500);
+    steps.push(step);
+  }
+  return steps.length > 80 ? steps.slice(-80) : steps;
+}
 function threadHistory(thread, local) {
   const history = [], matchedErrors = new Set(), matchedUsers = new Set();
   for (const turn of thread.turns) {
@@ -204,9 +218,13 @@ function threadHistory(thread, local) {
       const agents = items.filter(item => item.type === 'agentMessage');
       const finals = agents.filter(item => item.phase === 'final_answer');
       const before = history.length;
-      for (const item of finals.length ? finals : agents.slice(-1)) {
+      const answers = finals.length ? finals : agents.slice(-1);
+      for (const item of answers) {
         history.push({ role: 'assistant', text: item.text || '', time, duration_ms: turn.durationMs ?? undefined, codex_session_id: thread.id });
       }
+      // The turn's process as Codex App shows it: commentary, commands, edits, searches, tool calls.
+      const steps = turnSteps(items, new Set(answers));
+      if (steps.length && history.length > before) history[before].steps = steps;
       // Generated / viewed images live in their own items, not in the reply text.
       const images = items.flatMap(itemImages);
       if (images.length) {
@@ -629,6 +647,23 @@ function cancelQueued(key, id, principal) {
   syncLive(key);
   return entry;
 }
+// Turn a queued message into a steer of the running turn (the queue row's 引导 button).
+// When there is no running turn or Codex rejects the steer, it stays at the head of the queue.
+async function steerQueued(key, id, principal) {
+  const q = sessionQueues.get(key);
+  const index = q ? q.items.findIndex(entry => entry.id === id) : -1;
+  if (index < 0) throw failure('该消息已发送或不存在', 404);
+  const entry = q.items[index];
+  if (!principal.admin && entry.user !== principal.user?.username) throw failure('只能引导自己排队的消息', 403);
+  q.items.splice(index, 1);
+  entry.mode = 'steer';
+  delete entry.fallback;
+  if (await steer(key, entry, q)) return { id: entry.id, status: 'steered' };
+  q.items.unshift(entry);
+  syncLive(key);
+  drain(key);
+  return { id: entry.id, status: 'queued', steer_fallback: entry.fallback };
+}
 async function interruptSession(key) {
   const id = sessions[key]?.codex_session_id;
   if (!id) throw failure('会话不存在或未关联 Codex 会话', 404);
@@ -934,7 +969,7 @@ const server = http.createServer(async (req, res) => {
         const today = dayTotals.day === taipeiDay(Date.now()) ? dayTotals : { calls: 0, failures: 0, duration_ms: 0 };
         send(res, 200, { today: { calls: today.calls, failures: today.failures, avg_duration_ms: today.calls ? Math.round(today.duration_ms / today.calls) : 0 }, total_sessions: Object.keys(sessions).length, running: [...live.values()].filter(state => state.running).length, queued: [...live.values()].reduce((sum, state) => sum + state.queued, 0), uptime_s: Math.floor((Date.now() - bootTime) / 1000) }); return;
       }
-      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/queue(?:\/[0-9a-f-]{36})?)?$/);
+      const match = route.match(/^\/api\/sessions\/([^/]+)(\/history|\/stream|\/interrupt|\/queue(?:\/[0-9a-f-]{36}(?:\/steer)?)?)?$/);
       if (match) {
         let key;
         try {
@@ -961,7 +996,8 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 200, 550), principal)); return; }
         if (req.method === 'GET' && match[2] === '/stream') { streamSession(req, res, key, principal); return; }
         if (req.method === 'GET' && match[2] === '/queue') { send(res, 200, { queue: publicQueue(key), running: !!live.get(key)?.running || threadBusy(key) }); return; }
-        if (req.method === 'DELETE' && match[2]?.startsWith('/queue/')) { const entry = cancelQueued(key, match[2].slice(7), principal); send(res, 200, { ok: true, id: entry.id }); return; }
+        if (req.method === 'POST' && match[2]?.startsWith('/queue/') && match[2].endsWith('/steer')) { send(res, 200, { ok: true, ...await steerQueued(key, match[2].slice(7, -6), principal) }); return; }
+        if (req.method === 'DELETE' && match[2]?.startsWith('/queue/') && !match[2].endsWith('/steer')) { const entry = cancelQueued(key, match[2].slice(7), principal); send(res, 200, { ok: true, id: entry.id }); return; }
         if (req.method === 'POST' && match[2] === '/interrupt') { const turnId = await interruptSession(key); send(res, 200, { ok: true, turn_id: turnId }); return; }
         if (req.method === 'DELETE' && !match[2]) {
           if (!principal.admin) throw failure('仅管理员可以删除会话', 403);

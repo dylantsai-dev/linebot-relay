@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { HistoryEntry } from '../lib/types'
 import { renderMarkdown } from '../lib/markdown'
-import { time, duration } from '../lib/format'
+import { time, workedFor } from '../lib/format'
 import { copy } from '../lib/clipboard'
 import { state } from '../store'
 import AttachmentList from './AttachmentList.vue'
 import Icon from './Icon.vue'
+import TurnSteps from './TurnSteps.vue'
 
 const props = defineProps<{ entry: HistoryEntry; optimistic?: boolean }>()
+const steps = computed(() => props.entry.steps || [])
+const worked = computed(() => (props.entry.role === 'assistant' && props.entry.duration_ms !== undefined ? workedFor(props.entry.duration_ms / 1000) : ''))
+const open = ref(true)
+const copied = ref(false)
+async function copyText() { await copy(props.entry.text); copied.value = true; setTimeout(() => (copied.value = false), 1400) }
 const html = computed(() => renderMarkdown(props.entry.text))
-const who = computed(() => (props.entry.role === 'user' ? '你' : props.entry.role === 'error' ? '错误' : 'Codex'))
 const source = computed(() => (props.entry.role !== 'user' ? '' : props.entry.source === 'app' ? 'App' : props.entry.source || ''))
-const meta = computed(() => (props.entry.time ? time(props.entry.time).slice(11) : '') + (props.entry.duration_ms !== undefined ? ` · ${duration(props.entry.duration_ms)}` : ''))
 
 // Copy buttons for fenced code blocks, via delegation (no per-render DOM work).
 function onClick(e: MouseEvent) {
@@ -32,8 +36,14 @@ const withCopy = computed(() => html.value.replaceAll('<div class="code-block">'
 </script>
 <template>
   <article class="msg" :class="[entry.role, { optimistic }]">
-    <div v-if="entry.role !== 'user'" class="msg-avatar" :class="entry.role" aria-hidden="true"><Icon :name="entry.role === 'error' ? 'alert' : 'sparkles'" :size="15" :stroke="1.6" /></div>
     <div class="msg-main">
+      <template v-if="entry.role === 'assistant' && (worked || steps.length)">
+        <button type="button" class="turn-head" :disabled="!steps.length" :aria-expanded="open" @click="open = !open">
+          <span>{{ worked ? `用时 ${worked}` : '处理过程' }}</span><Icon v-if="steps.length" name="chevron" :size="13" class="turn-chev" :class="{ open }" />
+        </button>
+        <div class="turn-rule" />
+        <div class="turn-steps" :class="{ open: open && steps.length }"><div><TurnSteps v-if="steps.length" :steps="steps" /></div></div>
+      </template>
       <div v-if="entry.text" class="msg-body md" @click="onClick" v-html="withCopy" />
       <div v-if="entry.images?.length" class="gen-images">
         <button v-for="(img, i) in entry.images" :key="img.url" type="button" class="gen-image" :title="img.prompt || img.name" @click="state.lightbox = { src: img.url, alt: img.prompt || img.name || `图片 ${i + 1}` }">
@@ -41,11 +51,9 @@ const withCopy = computed(() => html.value.replaceAll('<div class="code-block">'
         </button>
       </div>
       <AttachmentList v-if="entry.attachments?.length" :files="entry.attachments" />
-      <div class="msg-meta">
-        <span class="who">{{ who }}</span>
-        <span v-if="source" class="badge" :class="{ app: source === 'App' }">{{ source }}</span>
-        <span class="meta mono">{{ optimistic ? '发送中…' : meta }}</span>
-        <button v-if="entry.role !== 'error' && entry.text" type="button" class="msg-copy" data-tip="复制消息" aria-label="复制消息" @click="copy(entry.text)"><Icon name="copy" :size="13" /></button>
+      <div class="msg-actions">
+        <button v-if="entry.role !== 'error' && entry.text" type="button" class="act-btn" :data-tip="copied ? '已复制' : '复制'" aria-label="复制消息" @click="copyText"><Icon :name="copied ? 'check' : 'copy'" :size="14" :stroke="1.6" /></button>
+        <span class="act-meta">{{ optimistic ? '发送中…' : [source && entry.role === 'user' ? source : '', entry.time ? time(entry.time).slice(11, 16) : ''].filter(Boolean).join(' · ') }}</span>
       </div>
     </div>
   </article>

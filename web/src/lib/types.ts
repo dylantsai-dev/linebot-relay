@@ -28,6 +28,8 @@ export interface HistoryEntry {
   attachments?: Attachment[]
   /** Images produced by thread items (image generation, image views, tool output): signed URLs. */
   images?: MediaImage[]
+  /** The turn's process (commentary, commands, edits, searches, tools) in order. */
+  steps?: LiveItem[]
 }
 export interface MediaImage { name: string; kind?: 'image'; url: string; source?: 'generated' | 'view' | 'tool'; prompt?: string }
 export type LiveKind = 'text' | 'reasoning' | 'plan' | 'command' | 'tool' | 'search' | 'file' | 'image' | 'other'
