@@ -19,6 +19,25 @@
 
 ---
 
+## 🎯 Why this project exists
+
+Codex is a capable agent: it reads rules, calls MCP tools, loads skills and keeps long-lived context in a thread. But out of the box it lives on **one person's machine, inside one person's Codex app**. Running customer service for a Japanese e-commerce business, we needed something else:
+
+1. **Outside systems must be able to hand it messages.** Messages from LINE, the shop back office or the order system should go into the right Codex thread with one HTTP request, and the reply should come back.
+2. **Many people need to watch and use it without each installing Codex.** Support, ops and leads open a console in the browser, see what happened in a thread and keep the conversation going.
+3. **Access has to stay tight.** Everyone sees only the threads assigned to them; only the super admin adds, removes or assigns threads, and nobody can use the console to create new Codex threads.
+
+linebot-relay is that middle layer, a **relay plus console**:
+
+- 🧵 **Same thread, same context**: it only attaches to threads that already exist in Codex. The Codex app, webhooks and the web console share one context, and every message lands in the same per-thread queue, so they never collide.
+- 🪝 **One entry point per thread**: each thread has its own webhook URL and key. A leaked key affects one thread and can be reset at any time, and a thread can be paused with one click.
+- 🖥️ **A clean, outward-facing UI**: the console is branded 「ディランボット 三代目」. End users see messages, files and progress, not the engine behind it.
+- 🧩 **Not a web Codex**: it never creates threads, changes Codex config or touches the Codex process. It only puts messages in, brings progress and results out, and shows them to the right people.
+
+In one line: **let an already-tuned Codex agent be called by business systems and shared safely by a team.**
+
+---
+
 ## ✨ Features
 
 - 🔗 **Existing Codex threads only**: the console and webhooks never create Codex threads; unknown IDs get a 404
@@ -28,7 +47,8 @@
 - 🚦 **Queue / steer**: while the AI is busy, choose 排队 (queue: send after the current turn) or 引导 (steer: inject into the running turn with `turn/steer`)
 - 📎 **Any file type**: images go to Codex as image input; other files are saved on the server and their absolute paths are passed to Codex. Drag & drop, paste and multi-select supported
 - ⬇️ **Download chips**: attachments in the history render as file chips with signed download links
-- 🪝 **Three webhooks**: `/webhook` (`mode` param), `/webhook/queue` (always queue), `/webhook/steer` (always steer), all accepting multipart file uploads
+- 🪝 **One webhook per thread**: `POST /hook/<id>` with the thread's own `dbk_` key; the URL decides the thread. Admins view it, copy curl and reset the key in the console; `mode` picks queue / steer; multipart uploads supported
+- ⏸️ **Pause receiving**: admins pause a thread with one click; while paused its webhook returns `423`, and the console still sends
 - 👥 **Users & permissions**: SQLite-backed; the super admin decides who sees which sessions
 - 🖼️ **Images**: AI-generated images shown via signed URLs, click to zoom
 - 📝 **Markdown**: marked + DOMPurify
@@ -40,7 +60,7 @@
 
 ```mermaid
 flowchart LR
-  W[🤖 Webhook caller] -- POST /webhook · /webhook/queue · /webhook/steer --> S
+  W[🤖 Webhook caller] -- POST /hook/&lt;id&gt; --> S
   B[🖥️ Browser console] -- /api/* --> S
   S[⚙️ server.js relay<br/>one queue per session] -- JSON-RPC over WebSocket<br/>unix socket --> A[🧠 codex app-server]
   A --> T[(🧵 Codex threads)]
@@ -84,7 +104,7 @@ flowchart LR
 | Delete a session (console record only, Codex untouched) | ✅ | ❌ |
 | Assign sessions to users | ✅ | ❌ |
 | Manage users, reset passwords | ✅ | ❌ |
-| View webhook token / global stats | ✅ | ❌ |
+| View / reset thread webhooks, pause receiving, global stats | ✅ | ❌ |
 | Read assigned sessions, send messages, upload files | ✅ | ✅ |
 | Queue / steer / stop turns (assigned sessions) | ✅ | ✅ |
 | Withdraw queued messages | ✅ all | ✅ own only |
@@ -117,7 +137,7 @@ On first visit with no admin yet, log in with `WEBHOOK_TOKEN` and create one (or
 
 | Variable | Default | Description |
 |---|---|---|
-| `WEBHOOK_TOKEN` | — **required** | Webhook bearer token, also the super-admin key |
+| `WEBHOOK_TOKEN` | — **required** | Super-admin key (setup and emergency login); no longer used to send webhooks |
 | `PORT` | `8790` | Listen port |
 | `HOST` | `127.0.0.1` | Listen address |
 | `CODEX_APP_SERVER_SOCK` | — | codex app-server control socket |
@@ -141,9 +161,8 @@ On first visit with no admin yet, log in with `WEBHOOK_TOKEN` and create one (or
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/webhook` | Token | Send to a session, `mode` = `queue` (default) / `steer` |
-| `POST` | `/webhook/queue` | Token | 📥 Always queue |
-| `POST` | `/webhook/steer` | Token | 🧭 Always steer |
+| `POST` | `/hook/:id` | Thread key | Send to this thread, `mode` = `queue` (default) / `steer`; `423` while paused |
+| `POST` | `/webhook` · `/webhook/queue` · `/webhook/steer` | — | 🚫 Retired, returns `410` |
 | `POST` | `/api/send` | Login | Console send; `async=1` returns 202 at once (`id`, `status`, `position`), then follow the stream |
 | `GET` | `/sessions` | Token | Session list (legacy) |
 | `GET` | `/health` | Public | Health check |
@@ -152,7 +171,10 @@ On first visit with no admin yet, log in with `WEBHOOK_TOKEN` and create one (or
 | `GET` | `/api/whoami` | Login | Current identity |
 | `GET` | `/api/sessions` | Login | Visible sessions (with `running` / `queued` state) |
 | `PUT` | `/api/sessions/:key` | 👑 | Link an existing Codex thread |
+| `PATCH` | `/api/sessions/:key` | 👑 | Rename; `paused: true/false` pauses or resumes receiving |
 | `DELETE` | `/api/sessions/:key` | 👑 | Delete a session |
+| `GET` | `/api/sessions/:key/webhook` | 👑 | View the thread's webhook URL and key |
+| `POST` | `/api/sessions/:key/webhook/rotate` | 👑 | Reset the key (same URL, old key stops working) |
 | `GET` | `/api/sessions/:key/history` | Granted | Message history (with attachments) |
 | `GET` | `/api/sessions/:key/stream` | Granted | Live stream (snapshot + deltas, resumes running turns) |
 | `GET` | `/api/sessions/:key/queue` | Granted | Current queue (running / steered / queued) |
@@ -171,21 +193,21 @@ On first visit with no admin yet, log in with `WEBHOOK_TOKEN` and create one (or
 
 ```sh
 # 💬 Queue (default), wait for the reply
-curl -X POST https://your-domain.example/webhook \
-  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+# Copy the URL and key from the console: session → Webhook
+curl -X POST "$HOOK_URL" \
+  -H "Authorization: Bearer $HOOK_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"session":"my-session","message":"Hello 👋"}'
+  -d '{"message":"Hello 👋"}'
 
 # 🧭 Steer into the running turn
-curl -X POST https://your-domain.example/webhook/steer \
-  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+curl -X POST "$HOOK_URL" \
+  -H "Authorization: Bearer $HOOK_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"session":"my-session","message":"Also run the tests"}'
+  -d '{"message":"Also run the tests","mode":"steer"}'
 
 # 📎 With files (multipart) and a callback
-curl -X POST https://your-domain.example/webhook/queue \
-  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
-  -F session=my-session \
+curl -X POST "$HOOK_URL" \
+  -H "Authorization: Bearer $HOOK_KEY" \
   -F message='Please review these two files' \
   -F callback_url=https://example.com/callback \
   -F file=@report.pdf \

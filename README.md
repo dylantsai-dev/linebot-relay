@@ -19,6 +19,25 @@
 
 ---
 
+## 🎯 为什么要做这个项目
+
+Codex 是一个很强的智能体：它能读规则、调用 MCP 工具、加载技能、长期记住一个会话里的上下文。但它原本只在 **一个人的电脑上、一个人的 Codex App 里** 用。我们做日本电商客服，需要的是另一回事：
+
+1. **让外部系统能把消息交给它。** LINE、店铺后台、订单系统这些地方来的消息，要能通过一个 HTTP 请求直接送进对应的 Codex 会话，再拿到回复。
+2. **让很多人一起看、一起用，又不用每个人都装 Codex。** 客服、运营、主管在浏览器里打开控制台，就能看到会话里发生了什么，也能接着发消息。
+3. **权限要收得住。** 每个人只看得到分给自己的会话，会话的增删和分配只有超级管理员能做，谁也不能借这个控制台在 Codex 里新建线程或乱开会话。
+
+linebot-relay 就是中间这一层 **中继 + 控制台**：
+
+- 🧵 **会话还是那个会话**：它只连接 Codex 里已经存在的线程，Codex App、Webhook、网页控制台看到的是同一份上下文，谁发的消息都会排进同一个队列，不会互相打架。
+- 🪝 **每个会话一个独立入口**：每个会话有自己的 Webhook 地址和密钥，泄露一个只影响一个，随时可以重置；会话还可以一键「暂停接收」。
+- 🖥️ **一个对外的、干净的界面**：控制台以「ディランボット 三代目」的品牌出现，终端用户只看到消息、文件、进度，看不到背后用的是什么引擎。
+- 🧩 **它不是网页版 Codex**：不新建会话、不改 Codex 配置、不碰 Codex 进程，只负责「把消息送进去、把过程和结果拿出来、给对的人看」。
+
+一句话：**让一个已经调教好的 Codex 智能体，能被业务系统调用、被团队安全地共同使用。**
+
+---
+
 ## ✨ 功能亮点
 
 - 🔗 **只关联已有 Codex 会话**：控制台和 Webhook 永远不会在 Codex 里新建线程，ID 不存在直接 404
@@ -28,7 +47,8 @@
 - 🚦 **排队 / 引导**：AI 忙时发消息可选「排队」（等当前回合结束再发）或「引导」（`turn/steer` 直接插进正在跑的回合）
 - 📎 **任意文件上传**：图片作为图像输入交给 Codex，其他文件保存到服务器并把绝对路径告诉 Codex；支持拖拽、粘贴、多选
 - ⬇️ **文件下载卡片**：消息里的附件显示为文件卡片，走签名链接下载
-- 🪝 **三个 Webhook**：`/webhook`（`mode` 参数）、`/webhook/queue`（固定排队）、`/webhook/steer`（固定引导），都支持 multipart 传文件
+- 🪝 **每个会话一个 Webhook**：`POST /hook/<id>` + 会话自己的 `dbk_` 密钥，地址决定会话；管理员可在控制台查看、复制 curl、重置密钥；`mode` 选排队 / 引导，支持 multipart 传文件
+- ⏸️ **暂停接收**：管理员可在会话旁一键暂停，暂停期间 Webhook 返回 `423`「该会话已暂停接收」，控制台照常可发
 - 👥 **用户与权限**：SQLite 存用户，超级管理员决定谁能看哪些会话
 - 🖼️ **图片显示**：AI 生成的图片通过签名链接安全展示，点击放大
 - 📝 **Markdown 渲染**：marked + DOMPurify，安全又好看
@@ -40,7 +60,7 @@
 
 ```mermaid
 flowchart LR
-  W[🤖 Webhook 调用方] -- POST /webhook · /webhook/queue · /webhook/steer --> S
+  W[🤖 Webhook 调用方] -- POST /hook/&lt;id&gt; --> S
   B[🖥️ 浏览器控制台] -- /api/* --> S
   S[⚙️ server.js 中继<br/>每会话一个队列] -- JSON-RPC over WebSocket<br/>unix socket --> A[🧠 codex app-server]
   A --> T[(🧵 Codex 线程)]
@@ -84,7 +104,7 @@ flowchart LR
 | 删除会话（仅控制台记录，不动 Codex） | ✅ | ❌ |
 | 给用户分配会话 | ✅ | ❌ |
 | 用户增删改、重置密码 | ✅ | ❌ |
-| 查看 Webhook Token / 全局统计 | ✅ | ❌ |
+| 查看 / 重置会话 Webhook、暂停接收、全局统计 | ✅ | ❌ |
 | 查看分到的会话、发消息、上传文件 | ✅ | ✅ |
 | 排队 / 引导 / 停止回合（分到的会话） | ✅ | ✅ |
 | 撤回排队中的消息 | ✅ 全部 | ✅ 仅自己的 |
@@ -117,7 +137,7 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `WEBHOOK_TOKEN` | — **必填** | Webhook 的 Bearer Token，同时是超级管理员密钥 |
+| `WEBHOOK_TOKEN` | — **必填** | 超级管理员密钥（初始化和应急登录用）；不再用于发 Webhook |
 | `PORT` | `8790` | 监听端口 |
 | `HOST` | `127.0.0.1` | 监听地址 |
 | `CODEX_APP_SERVER_SOCK` | — | codex app-server 控制 socket 路径 |
@@ -141,9 +161,8 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| `POST` | `/webhook` | Token | 发消息到会话，`mode` = `queue`（默认）/ `steer` |
-| `POST` | `/webhook/queue` | Token | 📥 固定排队模式 |
-| `POST` | `/webhook/steer` | Token | 🧭 固定引导模式 |
+| `POST` | `/hook/:id` | 会话密钥 | 发消息到这个会话，`mode` = `queue`（默认）/ `steer`；暂停时返回 `423` |
+| `POST` | `/webhook` · `/webhook/queue` · `/webhook/steer` | — | 🚫 已停用，返回 `410` |
 | `POST` | `/api/send` | 登录 | 控制台发消息；`async=1` 立即返回 202（`id`、`status`、`position`），之后走流式推送 |
 | `GET` | `/sessions` | Token | 会话列表（旧接口） |
 | `GET` | `/health` | 公开 | 健康检查 |
@@ -152,7 +171,10 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 | `GET` | `/api/whoami` | 登录 | 当前身份 |
 | `GET` | `/api/sessions` | 登录 | 可见会话（含 `running` / `queued` 状态） |
 | `PUT` | `/api/sessions/:key` | 👑 | 关联 Codex 已有会话 |
+| `PATCH` | `/api/sessions/:key` | 👑 | 改名、`paused: true/false` 暂停或恢复接收 |
 | `DELETE` | `/api/sessions/:key` | 👑 | 删除会话 |
+| `GET` | `/api/sessions/:key/webhook` | 👑 | 查看会话 Webhook 地址和密钥 |
+| `POST` | `/api/sessions/:key/webhook/rotate` | 👑 | 重置密钥（地址不变，旧密钥立即失效） |
 | `GET` | `/api/sessions/:key/history` | 已授权 | 历史消息（含附件） |
 | `GET` | `/api/sessions/:key/stream` | 已授权 | 流式推送（快照 + 增量，刷新后可接上运行中的回合） |
 | `GET` | `/api/sessions/:key/queue` | 已授权 | 当前队列（运行中 / 已引导 / 排队中） |
@@ -171,21 +193,21 @@ npm start                 # 默认 http://127.0.0.1:8790/console
 
 ```sh
 # 💬 排队（默认），同步等回复
-curl -X POST https://your-domain.example/webhook \
-  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+# 地址和密钥在控制台「会话 → Webhook」里复制
+curl -X POST "$HOOK_URL" \
+  -H "Authorization: Bearer $HOOK_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"session":"my-session","message":"你好 👋"}'
+  -d '{"message":"你好 👋"}'
 
 # 🧭 引导：插进正在跑的回合
-curl -X POST https://your-domain.example/webhook/steer \
-  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+curl -X POST "$HOOK_URL" \
+  -H "Authorization: Bearer $HOOK_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"session":"my-session","message":"顺便把测试也跑一下"}'
+  -d '{"message":"顺便把测试也跑一下","mode":"steer"}'
 
 # 📎 带文件（multipart），完成后回调
-curl -X POST https://your-domain.example/webhook/queue \
-  -H "Authorization: Bearer $WEBHOOK_TOKEN" \
-  -F session=my-session \
+curl -X POST "$HOOK_URL" \
+  -H "Authorization: Bearer $HOOK_KEY" \
   -F message='帮我看看这两个文件' \
   -F callback_url=https://example.com/callback \
   -F file=@report.pdf \
