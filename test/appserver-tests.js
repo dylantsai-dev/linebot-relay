@@ -307,9 +307,18 @@ async function main() {
   assert.equal(setModel.status, 200); assert.equal(setModel.body.session.model, 'm-b');
   assert.equal((await post('images', 'with model')).status, 200);
   assert.equal(fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params.model, 'm-b');
+  assert.deepEqual(listed.body.models[1].supportedReasoningEfforts.map(e => e.id), ['low', 'high']);
+  assert.equal(listed.body.models[1].serviceTiers[0].id, 'fast');
+  assert.equal((await api('PATCH', '/api/sessions/images', { effort: 'xhigh' })).status, 400);
+  assert.equal((await api('PATCH', '/api/sessions/images', { service_tier: 'slow' })).status, 400);
+  const tuned = await api('PATCH', '/api/sessions/images', { effort: 'high', service_tier: 'fast' });
+  assert.equal(tuned.status, 200); assert.equal(tuned.body.session.effort, 'high'); assert.equal(tuned.body.session.service_tier, 'fast');
+  assert.equal((await post('images', 'tuned')).status, 200);
+  { const p = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params; assert.equal(p.model, 'm-b'); assert.equal(p.effort, 'high'); assert.equal(p.serviceTier, 'fast'); }
+  { const c = await api('PATCH', '/api/sessions/images', { effort: null, service_tier: null }); assert.equal(c.body.session.effort, undefined); assert.equal(c.body.session.service_tier, undefined); }
   assert.equal((await api('PATCH', '/api/sessions/images', { model: null })).body.session.model, undefined);
   assert.equal((await post('images', 'no model')).status, 200);
-  assert.equal(fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params.model, undefined);
+  { const p = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === uploaded.body.codex_session_id).at(-1).params; assert.equal(p.model, undefined); assert.equal(p.effort, undefined); assert.equal(p.serviceTier, undefined); }
   const uploadHistory = (await get('/api/sessions/images/history')).body;
   assert.equal(uploadHistory.source,'thread');
   assert.equal(uploadHistory.history[0].text,'请查看附件。');

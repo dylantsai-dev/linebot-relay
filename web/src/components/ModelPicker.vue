@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount } from 'vue'
-import { models, fetchModels, setSessionModel, toast } from '../store'
-import type { Session } from '../lib/types'
+import { models, fetchModels, setSessionTuning, toast } from '../store'
+import type { Session, ModelInfo } from '../lib/types'
 import Icon from './Icon.vue'
 
 const props = defineProps<{ session: Session; editable: boolean }>()
@@ -9,10 +9,17 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref('')
 const root = ref<HTMLElement | null>(null)
+const EFFORT: Record<string, string> = { none: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '极高' }
+const TIER: Record<string, string> = { fast: '快速', flex: '经济', priority: '优先', default: '标准', standard: '标准' }
+const effortName = (id?: string | null) => id ? EFFORT[id] || id : ''
+const tierName = (id?: string | null, m?: ModelInfo) => id ? TIER[id] || m?.serviceTiers.find(t => t.id === id)?.name || id : ''
+const fallback = computed(() => models.value.find(m => m.isDefault))
+const current = computed(() => models.value.find(m => m.id === props.session.model) || (!props.session.model ? fallback.value : undefined))
 const label = computed(() => {
   const id = props.session.model
-  if (!id) return '默认'
-  return models.value.find(m => m.id === id)?.displayName || id
+  const name = !id ? '默认' : models.value.find(m => m.id === id)?.displayName || id
+  const extra = [effortName(props.session.effort), tierName(props.session.service_tier, current.value)].filter(Boolean)
+  return extra.length ? `${name} · ${extra.join(' · ')}` : name
 })
 function outside(e: MouseEvent) { if (root.value && !root.value.contains(e.target as Node)) close() }
 function close() { open.value = false; document.removeEventListener('mousedown', outside) }
@@ -23,31 +30,56 @@ async function toggle() {
   loading.value = !models.value.length
   try { await fetchModels() } catch (e: any) { error.value = e.message || '获取模型失败' } finally { loading.value = false }
 }
-async function choose(id: string | null) {
-  close()
-  if ((props.session.model || null) === id) return
-  try { await setSessionModel(props.session.key, id) } catch (e: any) { toast(e.message) }
+async function patch(p: Record<string, string | null>, note: string) {
+  try { await setSessionTuning(props.session.key, p, note) } catch (e: any) { toast(e.message) }
 }
+function chooseModel(id: string | null) {
+  if ((props.session.model || null) === id) return
+  const next = id ? models.value.find(m => m.id === id) : fallback.value
+  const p: Record<string, string | null> = { model: id }
+  // Drop overrides the new model does not support.
+  if (props.session.effort && !next?.supportedReasoningEfforts.some(e => e.id === props.session.effort)) p.effort = null
+  if (props.session.service_tier && !next?.serviceTiers.some(t => t.id === props.session.service_tier)) p.service_tier = null
+  patch(p, '模型已切换')
+}
+const chooseEffort = (id: string | null) => { if ((props.session.effort || null) !== id) patch({ effort: id }, '思考深度已更新') }
+const chooseTier = (id: string | null) => { if ((props.session.service_tier || null) !== id) patch({ service_tier: id }, '速度已更新') }
 onBeforeUnmount(close)
 </script>
 
 <template>
   <div v-if="editable" ref="root" class="model-picker">
-    <button class="model-btn" :class="{ open }" :data-tip="open ? undefined : '切换这个会话使用的模型'" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+    <button class="model-btn" :class="{ open }" :data-tip="open ? undefined : '模型、思考深度和速度'" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
       <Icon name="sparkles" :size="13" /><span class="model-name">{{ label }}</span><Icon name="chevron" :size="12" />
     </button>
     <div v-if="open" class="model-menu" role="menu">
       <div class="model-head">模型</div>
-      <button class="model-item" role="menuitemradio" :aria-checked="!session.model" @click="choose(null)">
+      <button class="model-item" role="menuitemradio" :aria-checked="!session.model" @click="chooseModel(null)">
         <span class="model-text"><span>默认</span><small>跟随后台默认设置</small></span><Icon v-if="!session.model" name="check" :size="14" class="model-check" />
       </button>
       <div v-if="loading" class="model-note">加载中…</div>
       <div v-else-if="error" class="model-note err">{{ error }}</div>
-      <button v-for="m in models" v-else :key="m.id" class="model-item" role="menuitemradio" :aria-checked="session.model === m.id" @click="choose(m.id)">
-        <span class="model-text"><span>{{ m.displayName }}<em v-if="m.isDefault"> · 默认</em></span><small v-if="m.description">{{ m.description }}</small></span>
-        <Icon v-if="session.model === m.id" name="check" :size="14" class="model-check" />
-      </button>
+      <template v-else>
+        <button v-for="m in models" :key="m.id" class="model-item" role="menuitemradio" :aria-checked="session.model === m.id" @click="chooseModel(m.id)">
+          <span class="model-text"><span>{{ m.displayName }}<em v-if="m.isDefault"> · 默认</em></span><small v-if="m.description">{{ m.description }}</small></span>
+          <Icon v-if="session.model === m.id" name="check" :size="14" class="model-check" />
+        </button>
+        <template v-if="current?.supportedReasoningEfforts.length">
+          <div class="model-sep" /><div class="model-head">思考深度</div>
+          <div class="model-chips">
+            <button class="model-chip" :class="{ on: !session.effort }" @click="chooseEffort(null)">默认<em v-if="current.defaultReasoningEffort">（{{ effortName(current.defaultReasoningEffort) }}）</em></button>
+            <button v-for="e in current.supportedReasoningEfforts" :key="e.id" class="model-chip" :class="{ on: session.effort === e.id }" :data-tip="e.description || undefined" @click="chooseEffort(e.id)">{{ effortName(e.id) }}</button>
+          </div>
+        </template>
+        <template v-if="current?.serviceTiers.length">
+          <div class="model-sep" /><div class="model-head">速度</div>
+          <div class="model-chips">
+            <button class="model-chip" :class="{ on: !session.service_tier }" @click="chooseTier(null)">默认</button>
+            <button v-for="t in current.serviceTiers" :key="t.id" class="model-chip" :class="{ on: session.service_tier === t.id }" :data-tip="t.description || undefined" @click="chooseTier(t.id)">{{ tierName(t.id, current) }}</button>
+          </div>
+        </template>
+      </template>
     </div>
   </div>
-  <span v-else-if="session.model" class="model-btn static" data-tip="这个会话使用的模型"><Icon name="sparkles" :size="13" /><span class="model-name">{{ session.model }}</span></span>
+  <span v-else-if="session.model || session.effort || session.service_tier" class="model-btn static" data-tip="这个会话的模型设置"><Icon name="sparkles" :size="13" /><span class="model-name">{{ [session.model || '默认', effortName(session.effort), session.service_tier ? tierName(session.service_tier) : ''].filter(Boolean).join(' · ') }}</span></span>
 </template>

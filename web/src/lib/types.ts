@@ -14,6 +14,8 @@ export interface Session {
   paused?: boolean
   /** Admin-chosen model id for this session; unset means the default. */
   model?: string
+  effort?: string
+  service_tier?: string
   paused_at?: string
 }
 export interface Attachment {
@@ -55,4 +57,4 @@ export interface User { id: number; username: string; role: 'admin' | 'user'; di
 export interface Limits { max_file_bytes: number; max_files: number; max_total_bytes: number }
 export interface Me { ok: true; auth: 'token' | 'user'; role: 'admin' | 'user'; needs_setup: boolean; limits?: Limits; user: { id: number; username: string; role: 'admin' | 'user'; last_login_at: string | null } | null }
 
-export interface ModelInfo { id: string; displayName: string; description: string; isDefault: boolean }
+export interface ModelInfo { id: string; displayName: string; description: string; isDefault: boolean; defaultReasoningEffort: string | null; supportedReasoningEfforts: { id: string; description: string }[]; serviceTiers: { id: string; name: string; description: string }[]; defaultServiceTier: string | null }

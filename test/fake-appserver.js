@@ -152,7 +152,7 @@ class FakeAppServer {
         break;
       case 'model/list':
         if (!params?.cursor) respond({ data: [{ id: 'm-a', model: 'm-a', displayName: 'Model A', description: 'a', isDefault: true, hidden: false }, { id: 'm-h', displayName: 'Hidden', hidden: true }], nextCursor: 'p2' });
-        else respond({ data: [{ id: 'm-b', model: 'm-b', displayName: 'Model B', description: 'b', isDefault: false, hidden: false }], nextCursor: null });
+        else respond({ data: [{ id: 'm-b', model: 'm-b', displayName: 'Model B', description: 'b', isDefault: false, hidden: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'low', description: 'l' }, { reasoningEffort: 'high', description: 'h' }], serviceTiers: [{ id: 'fast', name: 'Fast', description: 'f' }], defaultServiceTier: null }], nextCursor: null });
         break;
       default: send({ id, error: { code: -32601, message: 'unsupported fixture request' } });
     }

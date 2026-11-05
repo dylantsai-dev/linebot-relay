@@ -409,7 +409,11 @@ async function modelList() {
   if (!appserver || !fs.existsSync(appserverSocket)) throw failure('模型服务未连接，暂时无法获取模型列表', 503);
   try {
     await appserver.connect();
-    const models = (await appserver.listModels()).map(m => ({ id: m.id || m.model, displayName: hideBrand(m.displayName || m.id || m.model), description: hideBrand(m.description || ''), isDefault: !!m.isDefault }));
+    const models = (await appserver.listModels()).map(m => ({ id: m.id || m.model, displayName: hideBrand(m.displayName || m.id || m.model), description: hideBrand(m.description || ''), isDefault: !!m.isDefault,
+      defaultReasoningEffort: m.defaultReasoningEffort || null,
+      supportedReasoningEfforts: (m.supportedReasoningEfforts || []).map(e => typeof e === 'string' ? { id: e, description: '' } : { id: e.reasoningEffort, description: hideBrand(e.description || '') }).filter(e => e.id),
+      serviceTiers: (m.serviceTiers || []).map(t => ({ id: t.id, name: hideBrand(t.name || t.id), description: hideBrand(t.description || '') })).filter(t => t.id),
+      defaultServiceTier: m.defaultServiceTier || null }));
     modelCache = { at: Date.now(), models };
     return models;
   } catch (error) {
@@ -428,7 +432,7 @@ async function runCodex(key, message, sessionId, input) {
     await appserver.subscribe(threadId);
     // Once sent, a lost response cannot prove the turn was not accepted.
     submitted = true;
-    const reply = await appserver.runTurn(threadId, input || message, config.timeout, { model: sessions[key]?.model });
+    const reply = await appserver.runTurn(threadId, input || message, config.timeout, { model: sessions[key]?.model, effort: sessions[key]?.effort, serviceTier: sessions[key]?.service_tier });
     return { session: key, codex_session_id: threadId, reply, transport: 'app-server' };
   } catch (error) {
     if (!submitted && error.appserverConnection) return runCodexExec(key, message, sessionId);
@@ -1075,7 +1079,7 @@ const server = http.createServer(async (req, res) => {
           if (!principal.admin) throw failure('仅管理员可以修改会话', 403);
           if (!sessions[key]) throw failure('会话不存在', 404);
           const input = await readJson(req);
-          if (input.name === undefined && input.paused === undefined && input.model === undefined) throw failure('没有要修改的内容', 400);
+          if (input.name === undefined && input.paused === undefined && input.model === undefined && input.effort === undefined && input.service_tier === undefined) throw failure('没有要修改的内容', 400);
           if (input.name !== undefined && typeof input.name !== 'string') throw failure('名称格式不正确', 400);
           if (input.paused !== undefined && typeof input.paused !== 'boolean') throw failure('paused 应为 true 或 false', 400);
           if (input.name !== undefined) {
@@ -1085,6 +1089,18 @@ const server = http.createServer(async (req, res) => {
           }
           if (input.model !== undefined && input.model !== null && (typeof input.model !== 'string' || !input.model.trim() || input.model.length > 120)) throw failure('模型格式不正确', 400);
           if (input.model === null) delete sessions[key].model; else if (input.model !== undefined) sessions[key].model = input.model.trim();
+          for (const [field, label] of [['effort', '思考深度'], ['service_tier', '速度']]) {
+            const v = input[field];
+            if (v === undefined) continue;
+            if (v !== null && (typeof v !== 'string' || !v.trim() || v.length > 60)) throw failure(label + '格式不正确', 400);
+          }
+          // Soft check against the cached model list (when warm): unknown values are rejected.
+          const chosen = sessions[key].model && modelCache?.models.find(m => m.id === sessions[key].model);
+          if (chosen && typeof input.effort === 'string' && chosen.supportedReasoningEfforts.length && !chosen.supportedReasoningEfforts.some(e => e.id === input.effort.trim())) throw failure('该模型不支持这个思考深度', 400);
+          if (chosen && typeof input.service_tier === 'string' && !chosen.serviceTiers.some(t => t.id === input.service_tier.trim())) throw failure('该模型不支持这个速度', 400);
+          for (const field of ['effort', 'service_tier']) {
+            if (input[field] === null) delete sessions[key][field]; else if (input[field] !== undefined) sessions[key][field] = input[field].trim();
+          }
           if (input.paused === true && !sessions[key].paused) { sessions[key].paused = true; sessions[key].paused_at = new Date().toISOString(); }
           if (input.paused === false) { delete sessions[key].paused; delete sessions[key].paused_at; }
           persist();

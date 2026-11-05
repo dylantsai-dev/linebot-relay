@@ -249,7 +249,7 @@ export function editSession(s: Session) { sessionEditor?.(s) }
 export function sessionName(s?: Session | null, key = '') { return s?.name || s?.key || key }
 function patchSession(updated: Session) {
   const i = state.sessions.findIndex(s => s.key === updated.key)
-  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url, paused: updated.paused, paused_at: updated.paused_at, model: updated.model }
+  if (i >= 0) state.sessions[i] = { ...state.sessions[i], name: updated.name, avatar_url: updated.avatar_url, paused: updated.paused, paused_at: updated.paused_at, model: updated.model, effort: updated.effort, service_tier: updated.service_tier }
 }
 export async function renameSession(key: string, name: string) {
   const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
@@ -262,10 +262,12 @@ export async function setSessionPaused(key: string, paused: boolean) {
   toast(paused ? '已暂停接收，Webhook 消息会被拒绝' : '已恢复接收', true)
 }
 /** Admin: choose the model for this session (null = default). */
-export async function setSessionModel(key: string, model: string | null) {
-  const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify({ model }) })
+export async function setSessionModel(key: string, model: string | null) { return setSessionTuning(key, { model }) }
+/** Admin: set model / effort / service_tier together (null clears a field). */
+export async function setSessionTuning(key: string, patch: { model?: string | null; effort?: string | null; service_tier?: string | null }, note = '已更新') {
+  const data = await api<{ session: Session }>(`/api/sessions/${keyPath(key)}`, { method: 'PATCH', body: JSON.stringify(patch) })
   patchSession(data.session)
-  toast('模型已切换', true)
+  toast(note, true)
 }
 let modelsAt = 0
 export const models = ref<import('./lib/types').ModelInfo[]>([])
