@@ -46,6 +46,9 @@ export const state = reactive({
   loadingOlder: false,
   /** Bumped to ask SessionsView to open the 关联会话 dialog (from the sidebar). */
   linkRequest: 0,
+  /** Bumped to ask SessionsView to open the 删除会话 dialog (from the sidebar). */
+  deleteRequest: 0,
+  deleteKey: '',
 })
 
 /* ---------- sidebar (desktop collapse, persisted) ---------- */
@@ -56,6 +59,13 @@ export function toggleSidebar() {
   else sidebarCollapsed.value = !sidebarCollapsed.value
 }
 export function requestLink() { state.tab = 'sessions'; state.drawer = false; state.linkRequest++ }
+export function requestDelete(key: string) {
+  if (!key) return
+  state.deleteKey = key
+  state.tab = 'sessions'
+  state.drawer = false
+  state.deleteRequest++
+}
 
 /* ---------- toast ---------- */
 export const toastState = reactive({ text: '', ok: false, visible: false, id: 0 })

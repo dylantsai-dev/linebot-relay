@@ -196,22 +196,32 @@ h1, h2, h3, .display { font-family: var(--serif); font-weight: 500; letter-spaci
 .nav-item:hover { background: var(--bg-hover); color: var(--ink); }
 .nav-item.active { background: var(--bg-active); color: var(--ink); font-weight: 500; }
 .nav-item.active .icon { color: var(--accent); }
-.side-section { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); margin: 0 10px; padding-top: 10px; }
-.side-label { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 8px; font-size: 11.5px; font-weight: 500; color: var(--faint); letter-spacing: .02em; }
+.side-section { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); margin: 0 0 0 10px; padding-top: 10px; padding-right: 0; overflow: hidden; }
+.side-label { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px 6px; font-size: 11.5px; font-weight: 500; color: var(--faint); letter-spacing: .02em; }
 .side-label .count { font-family: var(--mono); font-size: 10.5px; }
-.side-search { margin-bottom: 8px; }
+.side-search { margin-bottom: 8px; margin-right: 10px; }
 .side-search .input { height: 32px; background: var(--bg); border-color: var(--line); font-size: 13px; }
-.session-list { flex: 1; min-height: 0; overflow: auto; margin: 0 -4px; padding: 0 4px 8px; }
-.session-items { display: grid; gap: 1px; }
-.session-row { position: relative; border-radius: 9px; transition: background-color .12s; }
+/* Always reserve a thin right scrollbar (replaces the old 10px side-section margin) so rows never shift/squeeze. No horizontal scroll — long names ellipsis. */
+.session-list { flex: 1; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: scroll; overscroll-behavior: contain; margin: 0; padding: 0 0 8px; scrollbar-gutter: stable; scrollbar-width: thin; }
+.session-list::-webkit-scrollbar { width: 8px; }
+.session-list::-webkit-scrollbar-track { background: transparent; }
+.session-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--line-strong) 85%, transparent); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+.session-items { display: grid; gap: 1px; min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
+.session-row { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; overflow: hidden; border-radius: 9px; transition: background-color .12s; }
 .session-row:hover { background: var(--bg-hover); }
 .session-row.selected { background: var(--bg-active); }
-.session { display: flex; align-items: center; gap: 9px; width: 100%; height: 36px; padding: 0 10px; border: 0; background: none; text-align: left; cursor: pointer; color: var(--ink-2); font-size: 13px; border-radius: 9px; }
+.row-del { flex: none; display: grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; opacity: .7; transition: color .12s, background-color .12s, opacity .12s; }
+.row-del:hover { color: var(--red); background: var(--red-soft); opacity: 1; }
+.session-row.selected .row-del { color: var(--muted); opacity: .85; }
+.session-row.selected .row-del:hover { color: var(--red); }
+.session { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; height: 36px; padding: 0 10px 0 6px; border: 0; background: none; text-align: left; cursor: pointer; color: var(--ink-2); font-size: 13px; border-radius: 9px; overflow: hidden; }
+.session-row:not(.has-del) .session { padding-left: 10px; }
 .session-row.selected .session { color: var(--ink); font-weight: 500; }
 .s-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.s-time { font-size: 11px; color: var(--faint); white-space: nowrap; transition: opacity .12s; }
-.s-status { font-size: 11px; color: var(--accent); white-space: nowrap; font-weight: 500; }
-.row-actions { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: flex; gap: 1px; opacity: 0; pointer-events: none; transition: opacity .12s; padding-left: 12px; background: linear-gradient(90deg, transparent, var(--bg-hover) 12px); border-radius: 0 9px 9px 0; }
+.s-time { flex: none; font-size: 11px; color: var(--faint); white-space: nowrap; transition: opacity .12s; }
+.s-status { flex: none; font-size: 11px; color: var(--accent); white-space: nowrap; font-weight: 500; }
+.s-spin, .s-paused { flex: none; }
+.row-actions { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: flex; gap: 1px; opacity: 0; pointer-events: none; transition: opacity .12s; padding-left: 12px; background: linear-gradient(90deg, transparent, var(--bg-hover) 12px); border-radius: 0 9px 9px 0; z-index: 1; }
 .session-row.selected .row-actions { background: linear-gradient(90deg, transparent, var(--bg-active) 12px); }
 /* Hover only on fine pointers — touch sticky :hover must not pin the toolbar on another row.
    Keyboard: :focus-visible (not bare :focus-within), so closing a dialog that restores focus

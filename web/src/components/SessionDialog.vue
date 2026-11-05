@@ -14,7 +14,7 @@ const busy = ref(false), error = ref('')
 
 function clearRowActionFocus() {
   const el = document.activeElement as HTMLElement | null
-  if (el?.closest?.('.row-actions, .session-row')) el.blur()
+  if (el?.closest?.('.row-actions, .row-del, .session-row')) el.blur()
 }
 function open(s: Session) {
   session.value = s; name.value = s.name || ''; error.value = ''

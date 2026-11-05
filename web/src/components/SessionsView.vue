@@ -68,6 +68,11 @@ function openNew() {
   void loadThreads()
 }
 watch(() => state.linkRequest, () => openNew())
+watch(() => state.deleteRequest, () => {
+  if (!isAdmin.value || !state.deleteKey) return
+  toDelete.value = state.deleteKey
+  deleteDialog.value?.showModal()
+})
 async function create() {
   if (!canSubmit.value) return
   linking.value = true; linkError.value = ''
@@ -91,7 +96,11 @@ async function create() {
   } catch (e) { linkError.value = (e as Error).message }
   finally { linking.value = false }
 }
-function openDelete() { toDelete.value = state.selected; deleteDialog.value?.showModal() }
+function openDelete() {
+  if (!isAdmin.value || !state.selected) return
+  toDelete.value = state.selected
+  deleteDialog.value?.showModal()
+}
 async function confirmDelete() {
   deleting.value = true
   try { await deleteSession(toDelete.value); deleteDialog.value?.close(); toast('会话已删除', true) }

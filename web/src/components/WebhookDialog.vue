@@ -15,7 +15,7 @@ const loading = ref(false), error = ref(''), reveal = ref(false), confirming = r
 /** Drop focus from sidebar row mini-buttons so :focus / sticky hover cannot pin the floating toolbar after close. */
 function clearRowActionFocus() {
   const el = document.activeElement as HTMLElement | null
-  if (el?.closest?.('.row-actions, .session-row')) el.blur()
+  if (el?.closest?.('.row-actions, .row-del, .session-row')) el.blur()
 }
 
 async function open(s: Session) {

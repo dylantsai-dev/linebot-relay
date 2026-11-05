@@ -5,7 +5,7 @@ import Icon from './Icon.vue'
 import SessionAvatar from './SessionAvatar.vue'
 import {
   editSession, openWebhook, setSessionPaused, state, allSessions, selectSession, refreshSessions, refreshLogs, refreshUsers, isAdmin, canCreate, isDark, toggleTheme,
-  logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink,
+  logout, changeOwnPassword, toast, sidebarCollapsed, toggleSidebar, requestLink, requestDelete,
 } from '../store'
 import { canInstall, showIosInstallHint, installPwa } from '../lib/pwa'
 import { shortTime, time } from '../lib/format'
@@ -22,7 +22,7 @@ function go(tab: TabId) {
 }
 function clearRowActionFocus() {
   const el = document.activeElement as HTMLElement | null
-  if (el?.closest?.('.row-actions')) el.blur()
+  if (el?.closest?.('.row-actions, .row-del')) el.blur()
 }
 function open(key: string) {
   clearRowActionFocus()
@@ -111,7 +111,8 @@ async function savePassword() {
           <Icon name="alert" /><span>{{ state.sessionsError }}</span><button class="btn sm" @click="retry">重试</button>
         </div>
         <TransitionGroup v-else name="list" tag="div" class="session-items">
-          <div v-for="s in visible" :key="s.key" class="session-row" :class="{ selected: state.selected === s.key && state.tab === 'sessions' }">
+          <div v-for="s in visible" :key="s.key" class="session-row" :class="{ selected: state.selected === s.key && state.tab === 'sessions', 'has-del': canCreate }">
+            <button v-if="canCreate" type="button" class="row-del" data-tip="删除会话" :aria-label="`删除 ${s.name || s.key}`" @click.stop="requestDelete(s.key)"><Icon name="trash" :size="13" /></button>
             <button type="button" class="session" :aria-pressed="state.selected === s.key" :title="`${s.key} · ${s.codex_session_id || '未关联'} · ${time(s.updated_at)}`" @click="open(s.key)">
               <SessionAvatar :session="s" :size="20" />
               <span class="s-key">{{ s.name || s.key }}</span>
