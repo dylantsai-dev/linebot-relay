@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast, loadOlder, addToAgentsMd } from '../store'
+import { state, selectedSession, addFiles, removeFile, sendMessage, selectSession, limits, canCreate, cancelQueued, steerQueued, stopTurn, isAdmin, sidebarCollapsed, toggleSidebar, requestLink, editSession, openWebhook, toast, loadOlder } from '../store'
 import SessionAvatar from './SessionAvatar.vue'
 import type { HistoryEntry } from '../lib/types'
 import { copy } from '../lib/clipboard'
@@ -8,8 +8,6 @@ import { fileSize } from '../lib/format'
 import MessageItem from './MessageItem.vue'
 import LiveTurn from './LiveTurn.vue'
 import PromptCard from './PromptCard.vue'
-import AnnotationCard from './AnnotationCard.vue'
-import type { AnnotationItem } from './AnnotationCard.vue'
 import Icon from './Icon.vue'
 import ModelPicker from './ModelPicker.vue'
 import AccessPicker from './AccessPicker.vue'
@@ -21,61 +19,74 @@ const text = ref('')
 const dragging = ref(false)
 let dragDepth = 0
 
-/* ---- response annotations: select assistant text → review card → 加到 Agent.md ---- */
-const annotations = ref<AnnotationItem[]>([])
-const annoBusy = ref(false)
-function clearAnnotations() { annotations.value = []; window.getSelection()?.removeAllRanges() }
-function removeAnnotation(id: string) {
-  annotations.value = annotations.value.filter(a => a.id !== id)
-  if (!annotations.value.length) window.getSelection()?.removeAllRanges()
-}
-function offsetsIn(source: string, selected: string): { start: number; end: number } | null {
-  if (!selected) return null
-  const start = source.indexOf(selected)
-  if (start < 0) return null
-  return { start, end: start + selected.length }
+/* ---- cite selection: select bubble text → 「引用」 → quote chip in composer ---- */
+interface QuoteItem { id: string; text: string }
+interface QuoteBar { top: number; left: number; text: string }
+const quotes = ref<QuoteItem[]>([])
+const quoteBar = ref<QuoteBar | null>(null)
+let pendingCite = ''
+function clearQuoteBar() { quoteBar.value = null; pendingCite = '' }
+function removeQuote(id: string) { quotes.value = quotes.value.filter(q => q.id !== id) }
+function clearQuotes() { quotes.value = []; clearQuoteBar(); window.getSelection()?.removeAllRanges() }
+function placeQuoteBar(range: Range, text: string) {
+  const rect = range.getBoundingClientRect()
+  if (!rect.width && !rect.height) return
+  const pad = 8
+  const approxW = 72
+  let left = rect.left + rect.width / 2 - approxW / 2
+  left = Math.max(pad, Math.min(left, window.innerWidth - approxW - pad))
+  let top = rect.top - 40
+  if (top < pad) top = rect.bottom + pad
+  pendingCite = text
+  quoteBar.value = { top, left, text }
 }
 function captureSelection() {
-  if (annoBusy.value) return
   const sel = window.getSelection()
-  if (!sel || sel.isCollapsed || !sel.rangeCount) return
-  const text = sel.toString().replace(/\u00a0/g, ' ').trim()
-  if (!text || text.length < 2) return
+  if (!sel || sel.isCollapsed || !sel.rangeCount) { clearQuoteBar(); return }
+  const picked = sel.toString().replace(/\u00a0/g, ' ').replace(/\s+\n/g, '\n').trim()
+  if (!picked || picked.length < 1) { clearQuoteBar(); return }
   const range = sel.getRangeAt(0)
   const node = range.commonAncestorContainer
   const el = (node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement)
-  const body = el?.closest?.('.msg.assistant .msg-body[data-anno-source]') as HTMLElement | null
-  if (!body) return
-  const article = body.closest('.msg.assistant') as HTMLElement | null
-  if (!article || article.closest('.live-turn')) return
-  const messageId = article.getAttribute('data-message-id')
-  // Prefer the plain-text source from history when the selection still matches it.
-  const entry = state.history.find(e => e.role === 'assistant' && e.message_id && e.message_id === messageId)
-    || state.history.find(e => e.role === 'assistant' && e.text.includes(text))
-  const source = entry?.text || text
-  const off = offsetsIn(source, text)
-  const id = `${messageId || 'local'}:${off?.start ?? 0}:${off?.end ?? text.length}:${text.slice(0, 24)}`
-  if (annotations.value.some(a => a.id === id || a.text === text)) return
-  annotations.value = [...annotations.value, {
-    id,
-    text,
-    messageId: messageId || entry?.message_id || null,
-    startOffset: off?.start ?? null,
-    endOffset: off?.end ?? null,
-  }]
+  const body = el?.closest?.('.msg .msg-body[data-cite-source]') as HTMLElement | null
+  if (!body) { clearQuoteBar(); return }
+  const article = body.closest('.msg') as HTMLElement | null
+  if (!article || article.closest('.live-turn')) { clearQuoteBar(); return }
+  placeQuoteBar(range, picked)
 }
-function onDocMouseUp() { window.setTimeout(captureSelection, 0) }
-async function commitAnnotations() {
-  if (!annotations.value.length || annoBusy.value) return
-  annoBusy.value = true
-  const payload = annotations.value.map(a => ({ text: a.text, messageId: a.messageId, startOffset: a.startOffset, endOffset: a.endOffset }))
-  const ok = await addToAgentsMd(payload)
-  annoBusy.value = false
-  if (ok) clearAnnotations()
+function onDocMouseUp(e: MouseEvent) {
+  if ((e.target as Element | null)?.closest?.('.quote-bar')) return
+  window.setTimeout(captureSelection, 0)
 }
-onMounted(() => document.addEventListener('mouseup', onDocMouseUp))
-onBeforeUnmount(() => document.removeEventListener('mouseup', onDocMouseUp))
-watch(() => state.selected, () => clearAnnotations())
+function onDocScroll() { if (quoteBar.value) clearQuoteBar() }
+function citeSelection() {
+  const text = (pendingCite || quoteBar.value?.text || '').trim()
+  clearQuoteBar()
+  window.getSelection()?.removeAllRanges()
+  if (!text) return
+  const id = `${Date.now().toString(36)}:${text.slice(0, 32)}`
+  if (quotes.value.some(q => q.text === text)) {
+    textarea.value?.focus({ preventScroll: true })
+    return
+  }
+  quotes.value = [...quotes.value, { id, text }]
+  void nextTick(() => textarea.value?.focus({ preventScroll: true }))
+}
+function formatQuotedMessage(body: string, items: QuoteItem[]) {
+  if (!items.length) return body
+  const blocks = items.map(q => q.text.split(/\n/).map(line => `> ${line}`).join('\n')).join('\n\n')
+  const trimmed = body.trim()
+  return trimmed ? `${blocks}\n\n${trimmed}` : blocks
+}
+onMounted(() => {
+  document.addEventListener('mouseup', onDocMouseUp)
+  document.addEventListener('scroll', onDocScroll, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mouseup', onDocMouseUp)
+  document.removeEventListener('scroll', onDocScroll, true)
+})
+watch(() => state.selected, () => clearQuotes())
 
 const pending = computed(() => state.pending.get(state.selected))
 const drafts = computed(() => state.attachments.get(state.selected) || [])
@@ -196,11 +207,16 @@ watch(() => state.selected, async (key, prev) => {
 function grow() { const t = textarea.value; if (!t) return; t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 220)}px` }
 async function submit() {
   const key = state.selected, value = text.value
-  if (!key || pending.value || (!value.trim() && !drafts.value.length)) return
-  text.value = ''; textDrafts.delete(key); await nextTick(); grow()
+  const cited = quotes.value.slice()
+  if (!key || pending.value || (!value.trim() && !drafts.value.length && !cited.length)) return
+  const payload = formatQuotedMessage(value, cited)
+  text.value = ''; textDrafts.delete(key); quotes.value = []; await nextTick(); grow()
   stick = true
-  const ok = await sendMessage(value, mode.value)
-  if (!ok && state.selected === key && !text.value) { text.value = value; await nextTick(); grow() }
+  const ok = await sendMessage(payload, mode.value)
+  if (!ok && state.selected === key) {
+    if (!text.value) { text.value = value; await nextTick(); grow() }
+    if (!quotes.value.length && cited.length) quotes.value = cited
+  }
 }
 function onKey(e: KeyboardEvent) { if (e.key === 'Enter' && !e.isComposing && (!e.shiftKey || e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit() } }
 // Paste any file (screenshots, copied files); clipboard images without a real name get one.
@@ -232,7 +248,7 @@ const fresh = computed(() => !!state.selected && !state.historyLoading && !state
 const greeting = computed(() => { const h = new Date(state.now || Date.now()).getHours(); return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 13 ? '中午好' : h < 18 ? '下午好' : '晚上好' })
 const who = computed(() => state.me?.user?.username || '')
 // Codex-style: while a turn runs and nothing is typed, the send button becomes the stop button.
-const canStop = computed(() => (busy.value || !!pending.value) && !selectedSession.value?.draft && !text.value.trim() && !drafts.value.length)
+const canStop = computed(() => (busy.value || !!pending.value) && !selectedSession.value?.draft && !text.value.trim() && !drafts.value.length && !quotes.value.length)
 // Switching sessions cross-fades the conversation: the old one fades out quickly, the new one (from cache when
 // visited before, otherwise skeleton then content) fades in with a small rise, already scrolled to the bottom.
 const viewKey = computed(() => !state.selected ? 'home' : `${state.selected}:${items.value.length || !state.historyLoading ? 'ready' : 'loading'}`)
@@ -309,11 +325,11 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
       </Transition>
     </div>
 
-    <Transition name="fade">
-      <div v-if="state.selected && annotations.length" class="anno-dock">
-        <AnnotationCard :items="annotations" :submitting="annoBusy" @add="commitAnnotations" @dismiss="clearAnnotations" @remove="removeAnnotation" />
-      </div>
-    </Transition>
+    <Teleport to="body">
+      <button v-if="quoteBar" type="button" class="quote-bar" :style="{ top: quoteBar.top + 'px', left: quoteBar.left + 'px' }" @mousedown.prevent @click="citeSelection">
+        <Icon name="quote" :size="14" />引用
+      </button>
+    </Teleport>
     <form v-if="state.selected" class="composer" @submit.prevent="submit" @paste="onPaste">
       <TransitionGroup v-if="queued.length" tag="ul" name="list" class="queue-stack" aria-label="排队中的消息">
         <li v-for="(q, i) in queued" :key="q.id" class="queue-card" :title="queueTitle(q)">
@@ -329,6 +345,13 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
         </li>
       </TransitionGroup>
       <div class="composer-card">
+        <TransitionGroup v-if="quotes.length" tag="div" name="list" class="draft-quotes" aria-label="引用">
+          <div v-for="q in quotes" :key="q.id" class="quote-chip">
+            <span class="quote-chip-ico"><Icon name="quote" :size="14" /></span>
+            <span class="quote-chip-text" :title="q.text">{{ q.text }}</span>
+            <button type="button" class="chip-x" aria-label="移除引用" data-tip="移除引用" @click="removeQuote(q.id)"><Icon name="x" :size="12" /></button>
+          </div>
+        </TransitionGroup>
         <TransitionGroup v-if="drafts.length" tag="div" name="list" class="draft-files">
           <span v-for="f in drafts" :key="f.id" class="chip draft" :title="f.name">
             <img v-if="f.preview" :src="f.preview" alt=""><span v-else class="chip-icon"><Icon name="file-text" :size="15" /></span>
@@ -344,7 +367,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
           <AccessPicker v-if="isAdmin && selectedSession && !selectedSession.draft" :session="selectedSession" />
           <span class="spacer" />
           <button v-if="canStop" key="stop" type="button" class="send stop" :data-tip="state.stopping ? '正在停止…' : '停止当前回合'" aria-label="停止当前回合" :disabled="state.stopping" @click="pending || stopTurn()"><span class="stop-square" /></button>
-          <button v-else key="send" class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!text.trim() && !drafts.length"><Icon name="send" :size="16" :stroke="2.2" /></button>
+          <button v-else key="send" class="send" :data-tip="sendLabel" :aria-label="sendLabel" :disabled="!text.trim() && !drafts.length && !quotes.length"><Icon name="send" :size="16" :stroke="2.2" /></button>
         </div>
       </div>
     </form>

@@ -508,23 +508,26 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .picker-more { display: flex; margin: 8px auto 4px; }
 
 
-/* ---------- response annotation review card (选中助手回复 → 加到 Agent.md) ---------- */
-.anno-dock { flex: none; width: 100%; max-width: calc(var(--col) + 48px); margin: 0 auto; padding: 0 24px 10px; }
-.anno-card { position: relative; padding: 14px 14px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-pop); animation: prompt-in .2s ease-out; }
-.anno-close { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; }
-.anno-close:hover { background: var(--bg-hover); color: var(--ink); }
-.anno-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: min(36vh, 260px); overflow: auto; }
-.anno-item { position: relative; padding-right: 18px; }
-.anno-label { font-size: 12.5px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
-.anno-text { padding: 10px 12px; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--line); color: var(--ink-2); font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow: auto; }
-.anno-remove { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
-.anno-remove:hover { color: var(--red); background: var(--red-soft); }
-.anno-badge { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px auto 0; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-muted); color: var(--muted); font-size: 12px; width: fit-content; }
-.anno-action { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 12px; height: 40px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg-subtle); color: var(--ink); font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
-.anno-action:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
-.anno-action:disabled { opacity: .55; cursor: not-allowed; }
-@media (max-width: 767px) {
-  .anno-dock { padding: 0 10px 8px; }
+/* ---------- cite selection: floating 「引用」 + composer quote chips ---------- */
+.quote-bar {
+  position: fixed; z-index: 80; display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 500;
+  box-shadow: var(--shadow-pop); cursor: pointer; transform: translateZ(0);
+  animation: prompt-in .12s ease-out;
+}
+.quote-bar:hover { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.draft-quotes { display: grid; gap: 6px; padding: 10px 12px 0; }
+.quote-chip {
+  display: grid; grid-template-columns: 22px 1fr 22px; align-items: start; gap: 8px;
+  padding: 8px 8px 8px 10px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg-subtle); border-left: 3px solid var(--accent-line);
+}
+.quote-chip-ico { display: grid; place-items: center; width: 22px; height: 22px; color: var(--accent); margin-top: 1px; }
+.quote-chip-text {
+  min-width: 0; max-height: 4.5em; overflow: hidden; color: var(--ink-2);
+  font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
 }
 
 /* ---------- toast & lightbox ---------- */

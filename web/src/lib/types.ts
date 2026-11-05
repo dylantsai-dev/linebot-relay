@@ -37,7 +37,7 @@ export interface HistoryEntry {
   source?: string
   duration_ms?: number
   codex_session_id?: string
-  /** Codex agentMessage id — used for response annotations. */
+  /** Agent message id — used when citing a reply. */
   message_id?: string | null
   attachments?: Attachment[]
   /** Images produced by thread items (image generation, image views, tool output): signed URLs. */

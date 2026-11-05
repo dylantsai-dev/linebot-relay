@@ -6,7 +6,7 @@ import {
   Menu, RefreshCw, Check, X, Ellipsis, MessagesSquare, CircleAlert, User, Pencil, Users, ShieldCheck, Ban, Lock, ChevronDown,
   Upload, Square, Navigation, Clock, PanelLeftClose, PanelLeftOpen, ScrollText, BookOpen, Webhook, Download, FileText,
   LoaderCircle, Inbox, Activity, Hash, LogIn, UserRoundPlus, ListOrdered, ChartNoAxesColumn, Braces, Settings2, Sparkles,
-  CornerDownLeft, Image, FileCode, FileArchive, MessageSquareDashed, Eye, EyeOff, CirclePause, CirclePlay, UserCog, CornerUpRight, ListEnd, Cpu, Brain, Zap, Box, RotateCcw, CircleHelp, ShieldAlert, ChevronUp, Hand,
+  CornerDownLeft, Image, FileCode, FileArchive, MessageSquareDashed, TextQuote, Eye, EyeOff, CirclePause, CirclePlay, UserCog, CornerUpRight, ListEnd, Cpu, Brain, Zap, Box, RotateCcw, CircleHelp, ShieldAlert, ChevronUp, Hand,
 } from 'lucide-vue-next'
 
 const map: Record<string, Component> = {
@@ -17,7 +17,7 @@ const map: Record<string, Component> = {
   clock: Clock, 'panel-close': PanelLeftClose, 'panel-open': PanelLeftOpen, logs: ScrollText, docs: BookOpen,
   webhook: Webhook, download: Download, 'file-text': FileText, loader: LoaderCircle, inbox: Inbox, activity: Activity,
   hash: Hash, login: LogIn, 'user-plus': UserRoundPlus, queue: ListOrdered, stats: ChartNoAxesColumn, braces: Braces,
-  settings: Settings2, sparkles: Sparkles, enter: CornerDownLeft, image: Image, 'file-code': FileCode,
+  settings: Settings2, sparkles: Sparkles, enter: CornerDownLeft, quote: TextQuote, image: Image, 'file-code': FileCode,
   'file-archive': FileArchive, empty: MessageSquareDashed, eye: Eye, pause: CirclePause, play: CirclePlay, 'eye-off': EyeOff, 'user-cog': UserCog, 'steer-to': CornerUpRight, 'list-end': ListEnd, cpu: Cpu, brain: Brain, zap: Zap, box: Box, reset: RotateCcw, help: CircleHelp, 'shield-alert': ShieldAlert, 'chevron-up': ChevronUp, hand: Hand,
 }
 const props = defineProps<{ name: string; size?: number; stroke?: number }>()
