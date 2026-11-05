@@ -232,14 +232,14 @@ h1, h2, h3, .display { font-family: var(--serif); font-weight: 500; letter-spaci
 .user-role { font-size: 11.5px; color: var(--muted); }
 .user-chev { color: var(--faint); transition: transform .15s; }
 .user-btn[aria-expanded=true] .user-chev { transform: rotate(180deg); }
-.user-dropdown { position: absolute; left: 10px; right: 10px; bottom: calc(100% - 2px); min-width: 0; }
+.side-foot .user-dropdown { position: absolute; left: 10px; right: 10px; bottom: calc(100% - 2px); min-width: 0; }
 .user-card { display: flex; align-items: center; gap: 10px; padding: 10px 10px 12px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
 .user-card strong { display: block; font-size: 13px; }
 .user-card small { display: block; font-size: 11.5px; }
 
 /* collapsed rail (desktop) */
 @media (min-width: 768px) {
-  .sidebar.rail { width: var(--rail-w); }
+  .sidebar.rail { width: var(--rail-w); overflow: visible; }
   .sidebar.rail .brand-name, .sidebar.rail .label, .sidebar.rail .side-section, .sidebar.rail .user-meta, .sidebar.rail .user-chev { display: none; }
   .sidebar.rail .side-head { flex-direction: column; height: auto; padding: 12px 0 6px; gap: 8px; }
   .sidebar.rail .brand { flex: none; }
@@ -247,7 +247,7 @@ h1, h2, h3, .display { font-family: var(--serif); font-weight: 500; letter-spaci
   .sidebar.rail .nav-item { justify-content: center; padding: 0; }
   .sidebar.rail .side-nav { flex: 1; align-content: start; }
   .sidebar.rail .user-btn { justify-content: center; padding: 6px 0; }
-  .sidebar.rail .user-dropdown { left: 8px; right: auto; width: 240px; }
+  .sidebar.rail .side-foot .user-dropdown { left: 8px; right: auto; width: 240px; }
 }
 
 /* ---------- chat ---------- */
