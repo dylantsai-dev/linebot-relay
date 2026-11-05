@@ -1,5 +1,5 @@
 /* Codex Relay — warm, quiet, conversational.
-   Cream paper + warm charcoal, one terracotta accent, serif display type over a sans body.
+   Cream paper + warm charcoal, one blue accent, serif display type over a sans body.
    Original styles; no third-party assets. */
 :root {
   color-scheme: light;
@@ -9,7 +9,7 @@
   --bg-subtle: #f5f4ee; --bg-muted: #efede5; --bg-active: #e6e3d8;
   --line: #e7e4da; --line-strong: #d9d5c8;
   --ink: #1f1e1c; --ink-2: #3d3c38; --muted: #6f6d66; --faint: #a19e95;
-  --accent: #c96442; --accent-hover: #b4532f; --accent-ink: #ffffff;
+  --accent: #2f6fde; --accent-hover: #2459bd; --accent-ink: #ffffff;
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent); --accent-line: color-mix(in srgb, var(--accent) 38%, transparent);
   --bubble: #efece3;
   --green: #4f8a5b; --amber: #b7791f;
@@ -32,7 +32,7 @@
   --bg-subtle: #2b2a27; --bg-muted: #353430; --bg-hover: #353430; --bg-active: #3f3e39;
   --line: #3a3934; --line-strong: #4a4842;
   --ink: #f2f0e8; --ink-2: #d8d5cb; --muted: #a8a59b; --faint: #7a776e;
-  --accent: #d97757; --accent-hover: #e48b6c; --accent-ink: #1f1e1c;
+  --accent: #4b8bf5; --accent-hover: #6aa0f7; --accent-ink: #ffffff;
   --bubble: #1d1c1a; --green: #79b487; --amber: #e0a84a; --red: #e5776a;
   --overlay: rgba(0, 0, 0, .55);
   --shadow-pop: 0 0 0 1px rgba(255,255,255,.02), 0 12px 32px -10px rgba(0,0,0,.6);
@@ -44,7 +44,7 @@
   --bg-subtle: #2b2a27; --bg-muted: #353430; --bg-hover: #353430; --bg-active: #3f3e39;
   --line: #3a3934; --line-strong: #4a4842;
   --ink: #f2f0e8; --ink-2: #d8d5cb; --muted: #a8a59b; --faint: #7a776e;
-  --accent: #d97757; --accent-hover: #e48b6c; --accent-ink: #1f1e1c;
+  --accent: #4b8bf5; --accent-hover: #6aa0f7; --accent-ink: #ffffff;
   --bubble: #1d1c1a; --green: #79b487; --amber: #e0a84a; --red: #e5776a;
   --overlay: rgba(0, 0, 0, .55);
   --shadow-pop: 0 0 0 1px rgba(255,255,255,.02), 0 12px 32px -10px rgba(0,0,0,.6);
@@ -503,7 +503,7 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 .toolbar h2 { display: flex; align-items: center; margin: 0; font-size: 19px; }
 .banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--r); margin-bottom: 12px; font-size: 13px; }
 .banner.error { color: var(--red); background: var(--red-soft); }
-.table-card { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; background: var(--surface); }
+.table-card { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; overflow-x: auto; background: var(--surface); }
 .table-scroll { overflow: auto; }
 .table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
 .table th { font-size: 12px; font-weight: 500; color: var(--muted); padding: 11px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--bg-subtle); }
@@ -518,7 +518,7 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
 /* users */
 .users-search { width: 280px; }
 .users-count { font-size: 12.5px; }
-.user-grid { display: grid; grid-template-columns: minmax(170px, 1.4fr) 110px minmax(150px, 1.4fr) 120px 100px 210px; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.user-grid { min-width: 940px; display: grid; grid-template-columns: minmax(170px, 1.4fr) 110px minmax(150px, 1.4fr) 120px 100px 210px; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .user-grid:last-child { border-bottom: 0; }
 .user-grid.head { padding: 10px 16px; font-size: 12px; font-weight: 500; color: var(--muted); background: var(--bg-subtle); }
 .user-grid.row { transition: background-color .12s; }
@@ -626,6 +626,7 @@ a.chip:hover, button.chip:hover:not(:disabled) { border-color: var(--line-strong
   .page-head.row { align-items: flex-start; flex-direction: column; }
   .users-search { flex: 1; width: auto; }
   .users-count { display: none; }
+  .user-grid { min-width: 0; }
   .user-grid.head { display: none; }
   .user-grid.row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name actions" "meta meta"; gap: 8px 10px; padding: 14px; }
   .user-grid.row .u-name { grid-area: name; }
