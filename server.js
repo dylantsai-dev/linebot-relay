@@ -8,7 +8,7 @@ const path = require('node:path');
 const { URL } = require('node:url');
 const { AppServer, summarizeItem } = require('./lib/appserver');
 const APPROVAL_MODES = ['ask', 'assist', 'full']; // session.approval_mode; mapped to turn/start params in lib/appserver.js
-const { readRequest, prepareAttachments, parseUserContent, serveFile } = require('./lib/attachments');
+const { readRequest, prepareAttachments, combineInput, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
 const { Settings } = require('./lib/settings');
 const feishu = require('./lib/feishu');
@@ -675,16 +675,38 @@ function drain(key) {
       await waitIdle(key, q);
       if (!q.items.length) break;
       await acquire();
-      const entry = q.items.shift();
-      if (!entry) { release(); continue; }
+      const batch = takeBatch(q);
+      if (!batch.length) { release(); continue; }
+      const entry = batch.length === 1 ? batch[0] : mergeEntries(batch);
       q.running = entry;
       entry.started_at = new Date().toISOString();
       syncLive(key);
-      try { entry.resolve(await runEntry(key, entry)); }
-      catch (error) { entry.reject(error); }
+      try { const result = await runEntry(key, entry); for (const item of batch) item.resolve(result); }
+      catch (error) { for (const item of batch) item.reject(error); }
       finally { q.running = null; release(); syncLive(key); }
     }
   })().finally(() => { q.worker = null; if (q.items.length) drain(key); else syncLive(key); });
+}
+// Console messages typed while a turn ran go out together as the next turn (one combined message),
+// not one turn each. Only a contiguous run of console entries from the same operator is merged;
+// webhook messages are separate incoming events and always keep a turn of their own. Only messages that
+// arrived while a turn was already running are merged, so back-to-back sends to an idle session stay apart.
+function takeBatch(q) {
+  const head = q.items.shift();
+  if (!head) return [];
+  const batch = [head];
+  if (head.source !== 'console' || !head.waited) return batch;
+  while (q.items.length) {
+    const next = q.items[0];
+    if (next.source !== 'console' || !next.waited || next.user !== head.user || (next.codex_session_id && next.codex_session_id !== head.codex_session_id)) break;
+    batch.push(q.items.shift());
+  }
+  return batch;
+}
+function mergeEntries(batch) {
+  const head = batch[0];
+  const { message, attachments, input } = combineInput(batch);
+  return { ...head, message, attachments, input, mode: 'queue', fallback: undefined, merged: batch.map(entry => entry.id) };
 }
 async function runEntry(key, entry) {
   const started = Date.now();
@@ -752,6 +774,7 @@ function enqueue(body, source, requestId, { mode = 'queue', user = null } = {}) 
   entry.job = job;
   const accepted = (async () => {
     if (mode === 'steer' && await steer(body.session, entry, q)) return entry;
+    entry.waited = !!(q.running || q.steered.length || threadBusy(body.session));
     if (mode === 'steer') q.items.unshift(entry); else q.items.push(entry);
     syncLive(body.session);
     drain(body.session);
