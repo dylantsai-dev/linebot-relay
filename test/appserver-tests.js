@@ -665,6 +665,36 @@ async function main() {
   assert.deepEqual([idleAsync.status, idleAsync.body.status, idleAsync.body.position], [202, 'running', 0], 'idle session starts right away');
   await waitFor(() => fake.threads.get(qThread).includes('idle-async') && !client.busy(qThread), 'idle async send done');
   await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.length === 0, 'queue drained again');
+  // Several console messages queued behind one turn go out together as ONE next turn (in order, with every
+  // attachment); a withdrawn one is left out, and a webhook message queued after them keeps its own turn.
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4cf0000000049454e44ae426082', 'hex').toString('base64');
+  const holdBatch = api('POST', '/webhook/queue', { session: 'qs', message: '__hold__batch' });
+  await waitFor(() => client.busy(qThread), 'batch hold running');
+  const bOne = await api('POST', '/api/send', { session: 'qs', message: 'batch-one', async: '1', files: [{ name: 'note.txt', mime: 'text/plain', content_base64: Buffer.from('inline-note').toString('base64') }] });
+  const bTwo = await api('POST', '/api/send', { session: 'qs', message: 'batch-two', async: '1' });
+  const bThree = await api('POST', '/api/send', { session: 'qs', message: 'batch-three', async: '1', files: [{ name: 'dot.png', mime: 'image/png', content_base64: png }] });
+  const bHook = api('POST', '/webhook/queue', { session: 'qs', message: 'batch-hook' });
+  await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.filter(e => e.status === 'queued').length === 4, 'four queued');
+  assert.deepEqual([bOne.body.position, bTwo.body.position, bThree.body.position], [1, 2, 3]);
+  assert.equal((await api('DELETE', `/api/sessions/qs/queue/${bTwo.body.id}`)).status, 200, 'withdraw before the flush');
+  const startsBeforeBatch = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === qThread).length;
+  fake.held.get(qThread)();
+  await holdBatch;
+  assert.equal((await bHook).body.reply, 'reply:batch-hook');
+  const batchStarts = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === qThread).slice(startsBeforeBatch);
+  assert.equal(batchStarts.length, 2, 'console queue flushed as one turn, webhook as its own');
+  const combined = batchStarts[0].params.input;
+  assert.ok(combined[0].text.startsWith('batch-one\n\nbatch-three\n\n[附件 · linebot-relay]\n'), combined[0].text);
+  assert.ok(!combined[0].text.includes('batch-two'));
+  assert.ok(combined[0].text.includes('note.txt') && combined[0].text.includes('dot.png') && combined[0].text.includes('inline-note'));
+  assert.equal(combined.filter(part => part.type === 'localImage').length, 1);
+  assert.equal(batchStarts[1].params.input[0].text, 'batch-hook');
+  await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.length === 0, 'queue empty after the combined send');
+  const batchHistory = (await get('/api/sessions/qs/history')).body.history;
+  const batchUser = batchHistory.filter(e => e.role === 'user' && e.text.startsWith('batch-one'));
+  assert.equal(batchUser.length, 1);
+  assert.equal(batchUser[0].text, 'batch-one\n\nbatch-three');
+  assert.equal(batchUser[0].attachments.length, 2);
   // A queued message waits for a turn started elsewhere (the Codex App) too.
   fake.handle({ id: 'app-hold', method: 'turn/start', params: { threadId: qThread, input: [{ type: 'text', text: '__hold__app' }] } }, () => {}, () => {});
   await waitFor(() => client.busy(qThread), 'App turn running');

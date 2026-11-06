@@ -93,6 +93,14 @@ const drafts = computed(() => state.attachments.get(state.selected) || [])
 const busy = computed(() => state.threadRunning || selectedSession.value?.status === 'running' || state.queue.some(e => e.status !== 'queued'))
 const running = computed(() => !!pending.value || busy.value)
 const queued = computed(() => state.queue.filter(e => e.status === 'queued'))
+// Console messages queued in a row (same sender) go out together as one message on the next turn.
+const mergedNext = computed(() => {
+  const list = queued.value
+  if (!list.length || list[0].source !== 'console') return 0
+  let n = 1
+  while (n < list.length && list[n].source === 'console' && list[n].user === list[0].user) n++
+  return n
+})
 /** Show the mode switch whenever a new message would not start right away. */
 const showMode = computed(() => busy.value || queued.value.length > 0)
 // Codex-style: a message sent while a turn runs always queues; the queue card's 引导 button steers it.
@@ -347,6 +355,7 @@ const sendLabel = computed(() => (busy.value ? '排队发送' : '发送') + ' (E
             <button type="button" class="queue-act icon" :aria-label="`撤回排队消息 ${i + 1}`" data-tip="撤回（尚未发送）" @click="cancelQueued(q.id)"><Icon name="trash" :size="14" /></button>
           </template>
         </li>
+        <li v-if="mergedNext > 1" key="merge-hint" class="queue-hint">下一回合将把这 {{ mergedNext }} 条合并为一条发送</li>
       </TransitionGroup>
       <div class="composer-card">
         <TransitionGroup v-if="quotes.length" tag="div" name="list" class="draft-quotes" aria-label="引用">
