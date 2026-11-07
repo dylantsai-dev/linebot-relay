@@ -76,6 +76,27 @@ function persistedKeys() { try { return JSON.parse(fs.readFileSync(path.join(tem
 // The relay never starts threads: like the admin would, link a thread that already exists in Codex.
 const linkedKeys = new Map();
 let seq = 0;
+async function settleHook(pending, userText) {
+  const accepted = await pending;
+  if (accepted.status !== 202 || !accepted.body?.request_id) return accepted;
+  const requestId = accepted.body.request_id, session = accepted.body.session;
+  for (let i = 0; i < 400; i++) {
+    const logs = (await rawApi('GET', '/api/requests?limit=500')).body.requests;
+    const done = logs.find(e => e.request_id === requestId);
+    if (done) {
+      if (!done.ok) return { status: done.status, body: { error: done.error, session } };
+      const hist = (await rawApi('GET', `/api/sessions/${encodeURIComponent(session)}/history?limit=200`)).body.history || [];
+      const idx = hist.findIndex(e => e.role === 'user' && (e.request_id === requestId || (userText !== undefined && e.text === userText)));
+      const assist = [...hist].reverse().find(e => e.role === 'assistant' && e.request_id === requestId)
+        || (idx >= 0 ? hist.slice(idx).find(e => e.role === 'assistant') : undefined)
+        || [...hist].reverse().find(e => e.role === 'assistant');
+      const bound = ((await rawApi('GET', '/api/sessions')).body.sessions || []).find(s => s.key === session);
+      return { status: 200, body: { reply: assist?.text, session, request_id: requestId, id: accepted.body.id, mode: accepted.body.mode, transport: done.transport || 'app-server', codex_session_id: assist?.codex_session_id || bound?.codex_session_id, steered: accepted.body.status === 'steered', ...(accepted.body.steer_fallback ? { steer: accepted.body.steer_fallback } : {}) } };
+    }
+    await pause(10);
+  }
+  assert.fail(`timed out waiting for hook job ${requestId}`);
+}
 async function post(session, message, codex_session_id, extra = {}) {
   const key = Buffer.isBuffer(extra) ? /name="session"\r\n\r\n([^\r]+)\r\n/.exec(extra.toString('latin1'))?.[1] : session;
   if (!codex_session_id && typeof key === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(key) && !extra.__noLink && !persistedKeys()[key]) {
@@ -87,7 +108,8 @@ async function post(session, message, codex_session_id, extra = {}) {
     await linkedKeys.get(key);
   }
   if (extra && extra.__noLink) { extra = { ...extra }; delete extra.__noLink; }
-  return rawPost(session, message, codex_session_id, extra);
+  const accepted = await rawPost(session, message, codex_session_id, extra);
+  return extra && extra.callback_url ? accepted : settleHook(accepted, message);
 }
 // The shared /webhook is retired: posts go through the session's own hook when it has one, else
 // /api/send (binding a key to a thread, or validation cases), which applies the same checks.
@@ -648,8 +670,8 @@ async function main() {
   assert.equal(fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === qThread).length, qStartsBefore);
   await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.some(e => e.status === 'steered' && e.text === 'steer-in'), 'steered entry listed');
   fake.held.get(qThread)();
-  assert.equal((await held).body.reply, 'reply:__hold__one');
-  const steerResult = (await steered).body;
+  assert.equal((await settleHook(held, '__hold__one')).body.reply, 'reply:__hold__one');
+  const steerResult = (await settleHook(steered, 'steer-in')).body;
   assert.equal(steerResult.mode, 'steer');
   assert.equal(steerResult.steered, true);
   assert.equal(steerResult.reply, 'reply:__hold__one');
@@ -657,7 +679,7 @@ async function main() {
   await waitFor(async () => (await get('/api/sessions/qs/queue')).body.queue.length === 0, 'queue drained');
   assert.deepEqual(fake.threads.get(qThread), ['__hold__one', 'queued-two'], 'removed message is never sent');
   // Steer with nothing running: sent right away as a new turn.
-  const idleSteer = await api('POST', '/webhook', { session: 'qs', message: 'steer-idle', mode: 'steer' });
+  const idleSteer = await settleHook(api('POST', '/webhook', { session: 'qs', message: 'steer-idle', mode: 'steer' }), 'steer-idle');
   assert.equal(idleSteer.body.reply, 'reply:steer-idle');
   assert.equal(idleSteer.body.steer, 'no_active_turn');
   assert.equal((await api('POST', '/webhook', { session: 'qs', message: 'x', mode: 'bogus' })).status, 400);
@@ -679,8 +701,8 @@ async function main() {
   assert.equal((await api('DELETE', `/api/sessions/qs/queue/${bTwo.body.id}`)).status, 200, 'withdraw before the flush');
   const startsBeforeBatch = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === qThread).length;
   fake.held.get(qThread)();
-  await holdBatch;
-  assert.equal((await bHook).body.reply, 'reply:batch-hook');
+  await settleHook(holdBatch, '__hold__batch');
+  assert.equal((await settleHook(bHook, 'batch-hook')).body.reply, 'reply:batch-hook');
   const batchStarts = fake.requests.filter(r => r.method === 'turn/start' && r.params.threadId === qThread).slice(startsBeforeBatch);
   assert.equal(batchStarts.length, 2, 'console queue flushed as one turn, webhook as its own');
   const combined = batchStarts[0].params.input;
@@ -712,7 +734,7 @@ async function main() {
   const stopped = await api('POST', '/api/sessions/qs/interrupt');
   assert.equal(stopped.status, 200, JSON.stringify(stopped));
   assert.equal(fake.turns.get(qThread).find(t => t.items[0].content[0].text === '__hold__app').status, 'interrupted');
-  assert.equal((await afterApp).body.reply, 'reply:after-app');
+  assert.equal((await settleHook(afterApp, 'after-app')).body.reply, 'reply:after-app');
   assert.deepEqual(fake.threads.get(qThread).slice(-3), ['__hold__app', 'steer-rejected', 'after-app']);
   await waitFor(() => !client.busy(qThread), 'idle');
   assert.equal((await api('POST', '/api/sessions/qs/interrupt')).status, 409, 'nothing to stop');

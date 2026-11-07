@@ -1456,20 +1456,16 @@ const server = http.createServer(async (req, res) => {
     body.input = prepared.input;
     const { entry, job, accepted } = enqueue(body, route === '/api/send' ? 'console' : 'webhook', requestId, { mode, user: principal.user?.username || null });
     await accepted;
-    // Console sends return at once; the turn is followed over the stream.
-    if (route === '/api/send' && ['1', 'true', true].includes(body.async)) {
+    // Webhooks always return at once (callers often have a ~60s deadline). Console async
+    // sends do the same and follow the turn over the stream. An optional callback_url
+    // receives the finished result after the turn ends.
+    if (route !== '/api/send' || ['1', 'true', true].includes(body.async)) {
       const q = sessionQueues.get(body.session);
       const index = q ? q.items.indexOf(entry) : -1;
       // First in line with nothing running: the worker is about to start it.
       const startsNow = index === 0 && !q.running && !threadBusy(body.session);
       const status = q?.steered.includes(entry) ? 'steered' : q?.running === entry || startsNow ? 'running' : 'queued';
-      send(res, 202, { accepted: true, session: body.session, id: entry.id, mode, status, position: status === 'queued' ? index + 1 : 0, ...(entry.fallback ? { steer_fallback: entry.fallback } : {}) });
-      record(202);
-      void job.then(result => record(200, { message: body.message.slice(0, 200), reply: result.reply.slice(0, 200), transport: result.transport || 'exec' }), error => record(error.status || 500, { error: error.message, ...(error.transport ? { transport: error.transport } : {}) }));
-      return;
-    }
-    if (route !== '/api/send' && body.callback_url !== undefined) {
-      send(res, 202, { accepted: true, session: body.session, id: entry.id, mode });
+      send(res, 202, { accepted: true, session: body.session, id: entry.id, request_id: requestId, mode, status, position: status === 'queued' ? index + 1 : 0, ...(entry.fallback ? { steer_fallback: entry.fallback } : {}) });
       record(202);
       void (async () => {
         let payload;
@@ -1480,17 +1476,18 @@ const server = http.createServer(async (req, res) => {
           payload = { session: body.session, error: error.message };
           record(error.status || 500, { error: error.message, ...(error.transport ? { transport: error.transport } : {}) });
         }
+        if (route === '/api/send' || body.callback_url === undefined) return;
         try {
           const response = await fetch(body.callback_url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000), redirect: 'error' });
           await response.body?.cancel();
           if (!response.ok) throw failure(`Callback HTTP ${response.status}`);
         } catch (error) { record('callback_failed', { error: error.message }); }
       })();
-    } else {
-      const result = await job;
-      send(res, 200, result);
-      record(200, { message: body.message.slice(0, 200), reply: result.reply.slice(0, 200), transport: result.transport || 'exec' });
+      return;
     }
+    const result = await job;
+    send(res, 200, result);
+    record(200, { message: body.message.slice(0, 200), reply: result.reply.slice(0, 200), transport: result.transport || 'exec' });
   } catch (error) {
     if (!res.headersSent && !res.destroyed) send(res, error.status || 500, { error: error.message, ...(typeof body?.session === 'string' ? { session: body.session } : {}) });
     record(error.status || 500, { error: error.message, ...(error.transport ? { transport: error.transport } : {}) });

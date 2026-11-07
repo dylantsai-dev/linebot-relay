@@ -57,6 +57,23 @@ async function boot(name, extra = {}) {
     }
     return raw(auth, route, opts);
   };
+  const settleHook = async (accepted, userText) => {
+    if (accepted.status !== 202 || !accepted.body?.request_id) return accepted;
+    const requestId = accepted.body.request_id, session = accepted.body.session;
+    for (let i = 0; i < 400; i++) {
+      const logs = (await raw(token, '/api/requests?limit=500')).body.requests;
+      const done = logs.find(e => e.request_id === requestId);
+      if (done) {
+        if (!done.ok) return { status: done.status, body: { error: done.error, session } };
+        const hist = (await raw(token, `/api/sessions/${encodeURIComponent(session)}/history?limit=200`)).body.history || [];
+        const assist = [...hist].reverse().find(e => e.role === 'assistant' && e.request_id === requestId)
+          || hist.slice(Math.max(0, hist.findIndex(e => e.role === 'user' && (e.request_id === requestId || e.text === userText)))).find(e => e.role === 'assistant');
+        return { status: 200, body: { reply: assist?.text, session, request_id: requestId, id: accepted.body.id, mode: accepted.body.mode, codex_session_id: assist?.codex_session_id, steered: accepted.body.status === 'steered', ...(accepted.body.steer_fallback ? { steer: accepted.body.steer_fallback } : {}) } };
+      }
+      await pause(15);
+    }
+    throw new Error(`hook job ${requestId} did not finish`);
+  };
   const raw = async (auth, route, { method = 'GET', body, form } = {}) => {
     const headers = auth ? { Authorization: `Bearer ${auth}` } : {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -64,7 +81,7 @@ async function boot(name, extra = {}) {
     const type = response.headers.get('content-type') || '';
     return { status: response.status, body: type.includes('json') ? await response.json() : await response.arrayBuffer() };
   };
-  return { base, call, dir };
+  return { base, call, dir, settleHook };
 }
 const enc = encodeURIComponent;
 const adminTokens = new Set();
@@ -88,7 +105,7 @@ async function main() {
   }
 
   // ---- seeded admin ----
-  const { call, dir, base } = await boot('main', { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass-1' });
+  const { call, dir, base, settleHook } = await boot('main', { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'admin-pass-1' });
   assert.equal((await call(null, '/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'nope-nope' } })).status, 401);
   assert.equal((await call(null, '/api/auth/login', { method: 'POST', body: { username: 'ghost', password: 'nope-nope' } })).status, 401);
   const adminLogin = await call(null, '/api/auth/login', { method: 'POST', body: { username: 'ADMIN', password: 'admin-pass-1' } });
@@ -102,7 +119,7 @@ async function main() {
 
   // WEBHOOK_TOKEN backward compatibility: webhook + API with full access.
   for (const session of ['s1', 's2']) {
-    const reply = await call(token, '/webhook', { method: 'POST', body: { session, message: `hello ${session}` } });
+    const reply = await settleHook(await call(token, '/webhook', { method: 'POST', body: { session, message: `hello ${session}` } }), `hello ${session}`);
     assert.equal(reply.status, 200); assert.match(reply.body.reply, /^echo:hello/);
   }
   assert.equal((await call(token, '/sessions')).status, 200);
@@ -120,7 +137,7 @@ async function main() {
   const hook1 = (await call(token, '/api/sessions/s1/webhook')).body.webhook, hook2 = (await call(admin, '/api/sessions/s2/webhook')).body.webhook;
   assert.match(hook1.path, /^\/hook\/[0-9a-f]{24}$/); assert.match(hook1.secret, /^dbk_[A-Za-z0-9_-]{32}$/); assert.notEqual(hook1.path, hook2.path);
   assert.deepEqual((await call(admin, '/api/sessions/s1/webhook')).body.webhook, hook1, 'stable once created');
-  const viaHook = await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'via hook', session: 's2' } });
+  const viaHook = await settleHook(await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'via hook', session: 's2' } }), 'via hook');
   assert.equal(viaHook.status, 200); assert.equal(viaHook.body.session, 's1', 'the hook decides the session'); assert.match(viaHook.body.reply, /echo:via hook/);
   assert.equal((await call(hook2.secret, hook1.path, { method: 'POST', body: { message: 'wrong key' } })).status, 401, "another session's key");
   assert.equal((await call(token, hook1.path, { method: 'POST', body: { message: 'admin token' } })).status, 401, 'WEBHOOK_TOKEN is not a hook key');
@@ -133,7 +150,7 @@ async function main() {
   const rotated = (await call(admin, '/api/sessions/s1/webhook/rotate', { method: 'POST' })).body.webhook;
   assert.equal(rotated.path, hook1.path, 'URL survives a reset'); assert.notEqual(rotated.secret, hook1.secret);
   assert.equal((await call(hook1.secret, hook1.path, { method: 'POST', body: { message: 'old key' } })).status, 401, 'old key dies at once');
-  assert.equal((await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'new key' } })).status, 200);
+  assert.equal((await settleHook(await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'new key' } }), 'new key')).status, 200);
   // Pause receiving: webhook messages are rejected with 423; the console still sends; only admins toggle.
   assert.equal((await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { paused: 'yes' } })).status, 400);
   const paused = await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { paused: true } });
@@ -144,7 +161,7 @@ async function main() {
   assert.equal((await call(admin, '/api/send', { method: 'POST', body: { session: 's1', message: 'console while paused' } })).status, 200);
   assert.ok((await call(admin, '/api/sessions')).body.sessions.find(s => s.key === 's1').paused);
   assert.equal((await call(admin, '/api/sessions/s1', { method: 'PATCH', body: { paused: false } })).body.session.paused, undefined);
-  assert.equal((await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'resumed' } })).status, 200);
+  assert.equal((await settleHook(await call(rotated.secret, rotated.path, { method: 'POST', body: { message: 'resumed' } }), 'resumed')).status, 200);
   assert.equal(fs.readdirSync(path.join(dir, 'codex-home', 'sessions'), { recursive: true }).length, before, 'no thread was started');
   assert.ok(!JSON.parse(fs.readFileSync(path.join(dir, 'data', 'sessions.json'), 'utf8'))['never-linked']);
 
@@ -324,7 +341,7 @@ async function main() {
 
   // Admin logins and WEBHOOK_TOKEN still auto-create; once it exists, a pre-granted user can use it.
   assert.equal((await call(admin, '/api/send', { method: 'POST', body: { session: 'pre-granted', message: 'admin creates' } })).status, 200);
-  assert.equal((await call(token, '/webhook', { method: 'POST', body: { session: 'tok-new', message: 'token creates' } })).status, 200);
+  assert.equal((await settleHook(await call(token, '/webhook', { method: 'POST', body: { session: 'tok-new', message: 'token creates' } }), 'token creates')).status, 200);
   assert.ok(sessionsJson()['pre-granted'] && sessionsJson()['tok-new']);
   assert.deepEqual((await call(a, '/api/sessions')).body.sessions.map(s => s.key).sort(), ['pre-granted', 's1']);
   assert.equal((await call(a, '/api/send', { method: 'POST', body: { session: 'pre-granted', message: 'now ok' } })).status, 200);

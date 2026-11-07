@@ -121,7 +121,27 @@ function rawRequest(url, body, auth = 'Bearer test-secret', method = body === un
     });
   });
 }
-const post = body => request('/webhook', body);
+async function settleHook(accepted, userText) {
+  if (accepted.status !== 202 || !accepted.body?.request_id) return accepted;
+  const requestId = accepted.body.request_id, session = accepted.body.session;
+  for (let i = 0; i < 400; i++) {
+    const logs = (await request('/api/requests?limit=500')).body.requests;
+    const done = logs.find(e => e.request_id === requestId);
+    if (done) {
+      if (!done.ok) return { status: done.status, body: { error: done.error, session } };
+      const hist = (await request(`/api/sessions/${encodeURIComponent(session)}/history?limit=200`)).body.history || [];
+      const assist = [...hist].reverse().find(e => e.role === 'assistant' && e.request_id === requestId)
+        || hist.slice(Math.max(0, hist.findIndex(e => e.role === 'user' && (e.request_id === requestId || e.text === userText)))).find(e => e.role === 'assistant');
+      return { status: 200, body: { reply: assist?.text, session, request_id: requestId, id: accepted.body.id, mode: accepted.body.mode, codex_session_id: assist?.codex_session_id, steered: accepted.body.status === 'steered', ...(accepted.body.steer_fallback ? { steer: accepted.body.steer_fallback } : {}) } };
+    }
+    await new Promise(resolve => setTimeout(resolve, 15));
+  }
+  throw new Error(`hook job ${requestId} did not finish`);
+}
+async function post(body) {
+  const accepted = await request('/webhook', body);
+  return body.callback_url ? accepted : settleHook(accepted, body.message);
+}
 async function main() {
   load();
   assert.equal((await request('/health')).status, 200);
@@ -219,6 +239,13 @@ async function main() {
   assert.equal((await post({ session: 'fail', message: 'recovered' })).status, 200);
   assert.equal((await post({ session: 'output', message: '__output__' })).body.reply, 'echo:__output__|history:1');
   assert.equal((await post({ session: 'fallback', message: '__fallback__' })).body.reply, 'echo:__fallback__|history:1');
+  const immediateStarted = Date.now();
+  const immediate = await request('/webhook', { session: 'immediate', message: 'delay:300:slow' });
+  assert.equal(immediate.status, 202, JSON.stringify(immediate));
+  assert.equal(immediate.body.accepted, true);
+  assert.ok(immediate.body.request_id);
+  assert.ok(Date.now() - immediateStarted < 250, 'hook should return before the turn finishes');
+  assert.equal((await settleHook(immediate, 'delay:300:slow')).body.reply, 'echo:delay:300:slow|history:1');
   assert.equal((await post({ session: 'callback', message: 'delay:100:callback', callback_url: 'https://example.test/callback' })).status, 202);
   assert.equal(callbacks.length, 0);
   for (let i = 0; i < 100 && !callbacks.length; i++) await new Promise(resolve => setTimeout(resolve, 20));
