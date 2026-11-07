@@ -85,7 +85,27 @@ async function main() {
     const response = await fetch(base + route, { ...options, headers: { Authorization: `Bearer ${token}`, ...options.headers } });
     return { status: response.status, body: await response.json() };
   }
-  const post = body => request('/webhook', { method: 'POST', body: JSON.stringify(body) });
+  const settleHook = async (accepted, userText) => {
+    if (accepted.status !== 202 || !accepted.body?.request_id) return accepted;
+    const requestId = accepted.body.request_id, session = accepted.body.session;
+    for (let i = 0; i < 400; i++) {
+      const logs = (await request('/api/requests?limit=500')).body.requests;
+      const done = logs.find(e => e.request_id === requestId);
+      if (done) {
+        if (!done.ok) return { status: done.status, body: { error: done.error, session } };
+        const hist = (await request(`/api/sessions/${encodeURIComponent(session)}/history?limit=200`)).body.history || [];
+        const assist = [...hist].reverse().find(e => e.role === 'assistant' && e.request_id === requestId)
+          || hist.slice(Math.max(0, hist.findIndex(e => e.role === 'user' && (e.request_id === requestId || e.text === userText)))).find(e => e.role === 'assistant');
+        return { status: 200, body: { reply: assist?.text, session, request_id: requestId, id: accepted.body.id, mode: accepted.body.mode, codex_session_id: assist?.codex_session_id, steered: accepted.body.status === 'steered', ...(accepted.body.steer_fallback ? { steer: accepted.body.steer_fallback } : {}) } };
+      }
+      await pause(15);
+    }
+    throw new Error(`hook job ${requestId} did not finish`);
+  };
+  const post = async body => {
+    const accepted = await request('/webhook', { method: 'POST', body: JSON.stringify(body) });
+    return body && body.callback_url ? accepted : settleHook(accepted, body && body.message);
+  };
   const ok = async (body, expected) => {
     const response = await post(body);
     assert.equal(response.status, 200, JSON.stringify(response));
