@@ -176,7 +176,11 @@ async function main() {
   const bound = await ok({ session: 'bound', message: 'bound', codex_session_id: first.codex_session_id }, 'echo:bound|history:3');
   assert.equal(bound.codex_session_id, first.codex_session_id);
   const ordered = await Promise.all([post({ session: 'ordered', message: 'delay:200:first' }), post({ session: 'ordered', message: 'second' }), post({ session: 'ordered', message: 'third' })]);
-  ordered.forEach((result, index) => { assert.equal(result.status, 200); assert.ok(result.body.reply.endsWith(`history:${index + 1}`)); assert.equal(result.body.codex_session_id, ordered[0].body.codex_session_id); });
+  // second and third arrived while first ran: they go out together as one next turn.
+  ordered.forEach(result => assert.equal(result.status, 200));
+  assert.equal(ordered[0].body.reply, 'echo:delay:200:first|history:1');
+  assert.equal(ordered[1].body.reply, 'echo:second\n\nthird|history:2');
+  assert.equal(ordered[1].body.codex_session_id, ordered[0].body.codex_session_id);
   const began = Date.now();
   const concurrent = await Promise.all([1, 2, 3].map(i => post({ session: `parallel${i}`, message: 'delay:400:parallel' })));
   assert.ok(concurrent.every(result => result.status === 200));

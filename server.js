@@ -535,7 +535,9 @@ async function runCodex(key, message, sessionId, input) {
     const reply = await appserver.runTurn(threadId, input || message, config.timeout, { model: sessions[key]?.model, effort: sessions[key]?.effort, serviceTier: sessions[key]?.service_tier, approvalMode: sessions[key]?.approval_mode });
     return { session: key, codex_session_id: threadId, reply, transport: 'app-server' };
   } catch (error) {
-    if (!submitted && error.appserverConnection) return runCodexExec(key, message, sessionId);
+    // Nothing was sent: the app-server is up but not answering. Keep the message queued and retry
+    // once it is reachable, instead of racing it with a CLI writer (which fails with 409 while it holds the thread).
+    if (!submitted && error.appserverConnection) { error.retryable = true; error.transport = 'app-server'; throw error; }
     error.transport = 'app-server';
     throw error;
   }
@@ -602,7 +604,7 @@ function runCodexExec(key, message, sessionId) {
       try {
         if (timedOut) throw failure('响应超时', 504);
         if (spawnError) throw spawnError;
-        if (activeWriter) throw failure('该会话正被占用，且后台服务未连接，暂时无法投递；请确认 app-server 正在运行', 409);
+        if (activeWriter) throw Object.assign(failure('该会话正被占用，且后台服务未连接，暂时无法投递；请确认 app-server 正在运行', 409), { retryable: true });
         if (eventError) throw failure(eventError);
         if (code !== 0) throw failure(stderr || `后台进程退出（代码 ${code}）`);
         try {
@@ -667,38 +669,60 @@ async function waitIdle(key, q) {
     }
   }
 }
+// Before sending, make sure the app-server answers (when one is configured and its socket exists).
+async function waitReachable(q) {
+  if (!appserver) return;
+  let delay = 1000;
+  while (q.items.length) {
+    if (!fs.existsSync(appserverSocket)) return;
+    try { await appserver.connect(); return; } catch { /* not answering yet */ }
+    await pause(delay);
+    delay = Math.min(delay * 2, 15000);
+  }
+}
 function drain(key) {
   const q = sessionQueue(key);
   if (q.worker) return;
   q.worker = (async () => {
+    let retryDelay = 1000;
     while (q.items.length) {
+      await waitReachable(q);
       await waitIdle(key, q);
       if (!q.items.length) break;
       await acquire();
       const batch = takeBatch(q);
       if (!batch.length) { release(); continue; }
       const entry = batch.length === 1 ? batch[0] : mergeEntries(batch);
+      entry.skipUserLog = batch.every(item => item.userLogged);
       q.running = entry;
       entry.started_at = new Date().toISOString();
       syncLive(key);
-      try { const result = await runEntry(key, entry); for (const item of batch) item.resolve(result); }
-      catch (error) { for (const item of batch) item.reject(error); }
+      let retry = false;
+      try { const result = await runEntry(key, entry); for (const item of batch) item.resolve(result); retryDelay = 1000; }
+      catch (error) {
+        // The message never reached Codex (backend down or thread held elsewhere): put it back and send it
+        // once the session is reachable and idle. Messages that arrive meanwhile join it in one turn.
+        if (error.retryable) { for (const item of batch) { item.userLogged = true; item.waited = true; delete item.started_at; } q.items.unshift(...batch); retry = true; }
+        else for (const item of batch) item.reject(error);
+      }
       finally { q.running = null; release(); syncLive(key); }
+      if (retry) { await pause(retryDelay); retryDelay = Math.min(retryDelay * 2, 15000); }
     }
   })().finally(() => { q.worker = null; if (q.items.length) drain(key); else syncLive(key); });
 }
-// Console messages typed while a turn ran go out together as the next turn (one combined message),
-// not one turn each. Only a contiguous run of console entries from the same operator is merged;
-// webhook messages are separate incoming events and always keep a turn of their own. Only messages that
-// arrived while a turn was already running are merged, so back-to-back sends to an idle session stay apart.
+// Messages that arrived while the session was busy go out together as the next turn (one combined
+// message), not one turn each. Webhook messages 1, 2, 3 that piled up become a single "1\n2\n3" turn.
+// A contiguous run from the same source is merged; console runs also need the same operator. Only
+// messages that arrived while a turn was already running are merged, so sends to an idle session stay apart.
 function takeBatch(q) {
   const head = q.items.shift();
   if (!head) return [];
   const batch = [head];
-  if (head.source !== 'console' || !head.waited) return batch;
+  if (!head.waited) return batch;
   while (q.items.length) {
     const next = q.items[0];
-    if (next.source !== 'console' || !next.waited || next.user !== head.user || (next.codex_session_id && next.codex_session_id !== head.codex_session_id)) break;
+    if (next.source !== head.source || !next.waited || (head.source === 'console' && next.user !== head.user)
+      || (next.codex_session_id && next.codex_session_id !== head.codex_session_id)) break;
     batch.push(q.items.shift());
   }
   return batch;
@@ -711,7 +735,7 @@ function mergeEntries(batch) {
 async function runEntry(key, entry) {
   const started = Date.now();
   try {
-    appendHistory(key, { role: 'user', text: entry.message, ...(entry.attachments.length ? { attachments: entry.attachments } : {}), time: new Date().toISOString(), source: entry.source, request_id: entry.request_id, ...(entry.mode === 'steer' ? { mode: 'steer' } : {}) });
+    if (!entry.skipUserLog) appendHistory(key, { role: 'user', text: entry.message, ...(entry.attachments.length ? { attachments: entry.attachments } : {}), time: new Date().toISOString(), source: entry.source, request_id: entry.request_id, ...(entry.mode === 'steer' ? { mode: 'steer' } : {}) });
     if (entry.codex_session_id) {
       const now = new Date().toISOString();
       sessions[key] = { ...sessions[key], codex_session_id: entry.codex_session_id, created_at: sessions[key]?.created_at || now, updated_at: now, messages: sessions[key]?.messages || 0 };
@@ -725,7 +749,7 @@ async function runEntry(key, entry) {
     appendHistory(key, { role: 'assistant', text: result.reply, time: now, duration_ms: Date.now() - started, codex_session_id: result.codex_session_id, request_id: entry.request_id });
     return { ...result, mode: entry.mode, ...(entry.fallback ? { steer: entry.fallback } : {}) };
   } catch (error) {
-    appendHistory(key, { role: 'error', text: error.message, time: new Date().toISOString(), duration_ms: Date.now() - started, codex_session_id: sessions[key]?.codex_session_id || null, request_id: entry.request_id });
+    if (!error.retryable) appendHistory(key, { role: 'error', text: error.message, time: new Date().toISOString(), duration_ms: Date.now() - started, codex_session_id: sessions[key]?.codex_session_id || null, request_id: entry.request_id });
     throw error;
   }
 }
