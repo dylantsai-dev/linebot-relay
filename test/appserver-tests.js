@@ -512,13 +512,16 @@ async function main() {
   assert.equal(client.pending.size, 0);
   assert.equal(client.waiters.size, 0);
 
-  // A rejected initialize handshake also falls back before turn submission.
+  // A rejected initialize handshake does not fall back to the CLI: the message stays queued and is
+  // sent once the app-server answers again.
   client.close();
   fake.rejectInitialize = true;
-  assert.equal((await post('one', 'handshake-failure')).body.error, 'EXEC_FALLBACK');
-  assert.equal(spawnCount, 1);
+  const spawnsBefore = spawnCount;
+  const heldPost = post('one', 'handshake-failure');
+  await pause(300);
   fake.rejectInitialize = false;
-  await pause(50);
+  assert.equal((await heldPost).body.reply, 'reply:handshake-failure');
+  assert.equal(spawnCount, spawnsBefore, 'no exec fallback while the app-server is unreachable');
   assert.equal((await post('one', 'after-handshake-failure')).body.reply, 'reply:after-handshake-failure');
 
   // ----- Fix 1: sessions only link existing Codex threads -----
@@ -762,20 +765,23 @@ async function main() {
   assert.match(download.headers['Content-Disposition'], /^inline;.*notes\.txt/);
   assert.equal((await rawGet(fileEntry.url.replace('&t=f', ''))).status, 404, 'download signature cannot serve as an image signature');
 
-  // Failure before any turn is sent may use exec, including backoff calls.
+  // While the socket exists but the app-server does not answer, messages wait in the queue (no exec,
+  // no error). Only once there is no app-server socket at all does the relay use the CLI.
   client.close();
   broken = true;
   await fake.close();
   if (!fs.existsSync(socketPath)) fs.writeFileSync(socketPath, 'stale socket');
   const before = fake.requests.filter(r => r.method === 'turn/start').length;
-  assert.equal((await post('one', 'connection-failure')).body.error, 'EXEC_FALLBACK');
-  assert.equal((await post('one', 'backoff')).body.error, 'EXEC_FALLBACK');
-  assert.equal(spawnCount, 3);
-  assert.equal(fake.requests.filter(r => r.method === 'turn/start').length, before);
+  const spawnsAtOutage = spawnCount;
+  const waiting = post('one', 'connection-failure');
+  await pause(500);
+  assert.equal(spawnCount, spawnsAtOutage, 'queued while the app-server is unreachable');
   fs.unlinkSync(socketPath);
+  assert.equal((await waiting).body.error, 'EXEC_FALLBACK');
+  assert.equal(fake.requests.filter(r => r.method === 'turn/start').length, before);
   assert.equal((await get('/api/sessions/external/history')).body.source, 'local');
   assert.equal((await post('one', 'missing-socket')).body.error, 'EXEC_FALLBACK');
-  assert.equal(spawnCount, 4);
+  assert.equal(spawnCount, spawnsAtOutage + 2);
   console.log(`App-server relay tests passed (${socketMode ? 'unix WebSocket' : 'simulated WebSocket'})`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {

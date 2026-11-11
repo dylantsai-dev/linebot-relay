@@ -41,6 +41,11 @@ process.stdin.on('end', async () => {
     fs.writeFileSync(path.join(dir, `rollout-2026-01-01T00-00-00-${id}.jsonl`), '');
   }
   if (prompt === '__active_writer__') { console.error('thread-store conflict: thread already has an active writer (code -32600)'); process.exitCode = 3; return; }
+  const once = /^__active_writer_once__:(\w+)$/.exec(prompt);
+  if (once && process.env.FAKE_CODEX_STATE) {
+    const marker = path.join(process.env.FAKE_CODEX_STATE, `writer-${once[1]}`);
+    if (!fs.existsSync(marker)) { fs.mkdirSync(process.env.FAKE_CODEX_STATE, { recursive: true }); fs.writeFileSync(marker, ''); console.error('thread already has an active writer (code -32600)'); process.exitCode = 3; return; }
+  }
   if (prompt === '__active_writer_event__') { emit({ type: 'error', message: 'thread already has an active writer (code -32600)' }); return; }
   if (prompt === '__timeout__') { setInterval(() => {}, 1000); return; }
   if (prompt === '__exit__') { console.error('fake stderr failure'); process.exitCode = 3; return; }

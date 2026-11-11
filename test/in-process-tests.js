@@ -224,7 +224,7 @@ async function main() {
   const parallel = await Promise.all([1, 2, 3].map(i => post({ session: `parallel${i}`, message: 'delay:150:test' })));
   assert.ok(parallel.every(result => result.status === 200));
   assert.ok(Date.now() - started >= 300);
-  for (const [message, status, error] of [['__exit__', 500, 'fake stderr failure'], ['__error__', 500, 'fake event failure'], ['__turn_failed__', 500, 'fake turn failure'], ['__timeout__', 504, '响应超时'], ['__active_writer__', 409, '正被占用'], ['__active_writer_event__', 409, '正被占用']]) {
+  for (const [message, status, error] of [['__exit__', 500, 'fake stderr failure'], ['__error__', 500, 'fake event failure'], ['__turn_failed__', 500, 'fake turn failure'], ['__timeout__', 504, '响应超时']]) {
     const result = await post({ session: 'fail', message });
     assert.equal(result.status, status);
     assert.ok(result.body.error.includes(error), result.body.error);
@@ -235,7 +235,27 @@ async function main() {
     }
   }
   const failedHistory = (await request('/api/sessions/fail/history')).body.history;
-  assert.equal(failedHistory.filter(e => e.role === 'error').length, 6);
+  assert.equal(failedHistory.filter(e => e.role === 'error').length, 4);
+  // A thread held by another writer is not an error: the message stays queued and is sent once it is free.
+  const held = await post({ session: 'held', message: '__active_writer_once__:held' });
+  assert.equal(held.status, 200);
+  assert.equal(held.body.reply, 'echo:__active_writer_once__:held|history:1');
+  const heldHistory = (await request('/api/sessions/held/history')).body.history;
+  assert.equal(heldHistory.filter(e => e.role === 'error').length, 0);
+  assert.equal(heldHistory.filter(e => e.role === 'user').length, 1);
+  // Webhook messages that arrive while a turn runs are sent together as one turn.
+  const firstHook = post({ session: 'hookbatch', message: 'delay:400:a' });
+  await new Promise(resolve => setTimeout(resolve, 120));
+  const restHooks = [];
+  for (const message of ['b', 'c', 'd']) { restHooks.push(await request('/webhook', { session: 'hookbatch', message })); }
+  assert.ok((await firstHook).body.reply.endsWith('history:1'));
+  const batched = await Promise.all(restHooks.map((accepted, i) => settleHook(accepted, ['b', 'c', 'd'][i])));
+  assert.ok(batched.every(result => result.status === 200));
+  const batchHistory = (await request('/api/sessions/hookbatch/history')).body.history;
+  const batchReplies = batchHistory.filter(e => e.role === 'assistant');
+  assert.equal(batchReplies.length, 2);
+  assert.ok(batchReplies[1].text.includes('b') && batchReplies[1].text.includes('c') && batchReplies[1].text.includes('d'));
+  assert.ok(batchReplies[1].text.endsWith('history:2'));
   assert.equal((await post({ session: 'fail', message: 'recovered' })).status, 200);
   assert.equal((await post({ session: 'output', message: '__output__' })).body.reply, 'echo:__output__|history:1');
   assert.equal((await post({ session: 'fallback', message: '__fallback__' })).body.reply, 'echo:__fallback__|history:1');

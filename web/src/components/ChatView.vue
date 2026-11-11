@@ -93,12 +93,13 @@ const drafts = computed(() => state.attachments.get(state.selected) || [])
 const busy = computed(() => state.threadRunning || selectedSession.value?.status === 'running' || state.queue.some(e => e.status !== 'queued'))
 const running = computed(() => !!pending.value || busy.value)
 const queued = computed(() => state.queue.filter(e => e.status === 'queued'))
-// Console messages queued in a row (same sender) go out together as one message on the next turn.
+// Messages queued in a row from the same source (console: same sender) go out together as one message on the next turn.
 const mergedNext = computed(() => {
   const list = queued.value
-  if (!list.length || list[0].source !== 'console') return 0
+  if (!list.length) return 0
+  const head = list[0]
   let n = 1
-  while (n < list.length && list[n].source === 'console' && list[n].user === list[0].user) n++
+  while (n < list.length && list[n].source === head.source && (head.source !== 'console' || list[n].user === head.user)) n++
   return n
 })
 /** Show the mode switch whenever a new message would not start right away. */
