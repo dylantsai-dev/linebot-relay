@@ -65,6 +65,7 @@ function loadRelay() {
       if (name === './lib/settings') return require('../lib/settings');
       if (name === './lib/feishu') return require('../lib/feishu');
       if (name === './lib/media') return require('../lib/media');
+      if (name === './lib/rollout-history') return require('../lib/rollout-history');
       return require(name);
     },
   });
@@ -774,6 +775,32 @@ async function main() {
   assert.equal(download.body, 'inline text');
   assert.match(download.headers['Content-Disposition'], /^inline;.*notes\.txt/);
   assert.equal((await rawGet(fileEntry.url.replace('&t=f', ''))).status, 404, 'download signature cannot serve as an image signature');
+
+  // Empty cache + on-disk rollout: recent assistant text pages without thread/read includeTurns,
+  // even if a full read would hang (the 16MB skip / hung-history path).
+  {
+    const { writePaddedRollout, keyOf } = require('./rollout-fixture');
+    const hugeId = require('node:crypto').randomUUID();
+    writePaddedRollout(path.join(temp, 'codex-home'), hugeId, { padBytes: 2 * 1024 * 1024, earlyTurns: 20, lateTurns: 20 });
+    assert.ok([200, 201].includes((await api('PUT', '/api/sessions/huge-rollout', { codex_session_id: hugeId })).status));
+    const includeReads = () => fake.requests.filter(r => r.method === 'thread/read' && r.params?.includeTurns !== false).length;
+    const beforeInclude = includeReads();
+    fake.hangRead = true;
+    const recent = await get('/api/sessions/huge-rollout/history?limit=30');
+    fake.hangRead = false;
+    assert.equal(recent.status, 200);
+    assert.equal(recent.body.source, 'thread');
+    assert.ok(recent.body.history.some(e => String(e.text).startsWith('LATE-ASSISTANT-')), 'disk tail must keep recent assistant text');
+    assert.ok(!recent.body.history.some(e => String(e.text).startsWith('EARLY-')), 'newest page should stay in the tail');
+    assert.equal(recent.body.has_more, true);
+    assert.equal(includeReads(), beforeInclude, 'huge/on-disk history must not call thread/read includeTurns');
+    const older = await get(`/api/sessions/huge-rollout/history?limit=30&before=${encodeURIComponent(recent.body.history[0].time)}`);
+    assert.equal(older.status, 200);
+    assert.equal(includeReads(), beforeInclude);
+    const seen = new Set(recent.body.history.map(keyOf));
+    for (const entry of older.body.history) assert.ok(!seen.has(keyOf(entry)), 'before= page must not repeat the newest page');
+    assert.ok(older.body.history.length, 'before= page should return older entries');
+  }
 
   // While the socket exists but the app-server does not answer, messages wait in the queue (no exec,
   // no error). Only once there is no app-server socket at all does the relay use the CLI.

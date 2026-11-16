@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { URL } = require('node:url');
 const { AppServer, summarizeItem } = require('./lib/appserver');
+const rolloutHistory = require('./lib/rollout-history');
 const APPROVAL_MODES = ['ask', 'assist', 'full']; // session.approval_mode; mapped to turn/start params in lib/appserver.js
 const { readRequest, prepareAttachments, combineInput, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
@@ -367,7 +368,7 @@ function mergeHistory(base, extra) {
 function historyRunning(key, id) {
   return !!(live.get(key)?.running || (appserver && id && (appserver.activeTurnId(id) || appserver.threadState(id).status === 'active')));
 }
-function historyPayload(key, limit, principal, before, { entries, source, revision, thread, localCount }) {
+function historyPayload(key, limit, principal, before, { entries, source, revision, thread, localCount, exhausted }) {
   const roots = mediaRoots(key, thread || cachedThread(key));
   const page = historyPage(entries, limit, before);
   const id = sessions[key]?.codex_session_id;
@@ -376,11 +377,39 @@ function historyPayload(key, limit, principal, before, { entries, source, revisi
   return {
     key, session: key,
     history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)),
-    has_more: page.has_more, source, running, queue: publicQueue(key), prompts: sessionPrompts(key),
+    has_more: !!(page.has_more || exhausted === false), source, running, queue: publicQueue(key), prompts: sessionPrompts(key),
     local_count: localCount,
     ...(revision !== undefined ? { revision } : {}),
     ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread || cachedThread(key)) } : {}),
   };
+}
+function snapshotCovers(snap, limit, before) {
+  if (!snap?.entries) return false;
+  if (!before) return !!(snap.exhausted || snap.entries.length >= limit);
+  const page = historyPage(snap.entries, limit, before);
+  if (!page.entries.length) return !!snap.exhausted;
+  if (!snap.exhausted) {
+    const oldest = Date.parse(snap.entries[0]?.time);
+    if (!Number.isFinite(oldest) || oldest >= before) return false;
+  }
+  return true;
+}
+function loadRolloutHistory(id, local, { limit, before }) {
+  const found = rolloutHistory.findRolloutFile(config.codexHome, id);
+  if (!found) return null;
+  if (found.compressed) return { compressed: true };
+  const index = rolloutHistory.ensurePage(found.path, { limit, before, index: appserver ? appserver.rolloutIndex(id) : null });
+  if (appserver) appserver.setRolloutIndex(id, index);
+  let entries = threadHistory({ id, turns: index.turns }, local);
+  if (appserver) {
+    const captured = appserver.capturedTurns(id);
+    const active = appserver.activeCapturedTurn(id);
+    const extra = [...captured];
+    if (active && !extra.some(turn => turn.id === active.id)) extra.push(active);
+    if (extra.length) entries = mergeHistory(entries, threadHistory({ id, turns: extra }, local));
+    appserver.setHistorySnapshot(id, { entries, localCount: local.length, revision: appserver.threadState(id).revision, exhausted: index.exhausted, fromRollout: true });
+  }
+  return { entries, exhausted: index.exhausted, turns: index.turns.length };
 }
 function compileSnapshot(id, local, snap) {
   const captured = appserver.capturedTurns(id);
@@ -390,7 +419,10 @@ function compileSnapshot(id, local, snap) {
   let entries = snap?.entries || [];
   if (turns.length || entries.length) entries = mergeHistory(entries, threadHistory({ id, turns }, local));
   else return null;
-  appserver.setHistorySnapshot(id, { entries, localCount: local.length, revision: appserver.threadState(id).revision, fromFullTurns: !!snap?.fromFullTurns });
+  appserver.setHistorySnapshot(id, {
+    entries, localCount: local.length, revision: appserver.threadState(id).revision,
+    fromFullTurns: !!snap?.fromFullTurns, fromRollout: !!snap?.fromRollout, exhausted: snap?.exhausted,
+  });
   return entries;
 }
 async function sessionHistory(key, limit, principal, before = null) {
@@ -408,12 +440,23 @@ async function sessionHistory(key, limit, principal, before = null) {
       const staleRevision = !!(snap && snap.revision !== revision && !active && !dirty);
       // A compact snapshot (plus turns started/completed since) is enough for paging: do not
       // call thread/read with includeTurns again, especially not on a hundred-MB rollout.
-      if (snap && !dirty && !staleRevision) {
-        return historyPayload(key, limit, principal, before, { entries: snap.entries, source: 'thread', revision, thread: { id }, localCount: local.length });
+      if (snap && !dirty && !staleRevision && snapshotCovers(snap, limit, before)) {
+        return historyPayload(key, limit, principal, before, { entries: snap.entries, source: 'thread', revision, thread: { id }, localCount: local.length, exhausted: snap.exhausted });
       }
-      if (snap && dirty && !staleRevision) {
+      if (snap && dirty && !staleRevision && snapshotCovers(snap, limit, before)) {
         const entries = compileSnapshot(id, local, snap);
-        if (entries) return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length });
+        if (entries) return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length, exhausted: snap.exhausted });
+      }
+      try {
+        const loaded = loadRolloutHistory(id, local, { limit, before });
+        // Empty rollout stubs (tests / not-yet-flushed threads) must not hide thread/read.
+        // A file with real turns is a faithful page and avoids hitching the App WebSocket.
+        if (loaded && !loaded.compressed && loaded.turns > 0) {
+          return historyPayload(key, limit, principal, before, { entries: loaded.entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length, exhausted: loaded.exhausted });
+        }
+      } catch (error) {
+        console.error('Rollout history read failed:', error.message || error);
+        // A huge rollout must not silently collapse to local user-only lines.
       }
       if ((staleRevision || !snap) && appserver.canReadFullTurns(id, { rolloutBytes: rolloutSize(id) })) {
         try {
@@ -425,7 +468,7 @@ async function sessionHistory(key, limit, principal, before = null) {
           try {
             const thread = { ...cache.thread, id };
             const entries = threadHistory(thread, local);
-            appserver.setHistorySnapshot(id, { entries, localCount: local.length, revision: cache.revision, fromFullTurns: true });
+            appserver.setHistorySnapshot(id, { entries, localCount: local.length, revision: cache.revision, fromFullTurns: true, exhausted: true });
             return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: cache.revision, thread, localCount: local.length });
           } finally {
             // Do not keep multi‑MB turn lists resident between polls.
@@ -443,7 +486,25 @@ async function sessionHistory(key, limit, principal, before = null) {
       if (entries) return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length });
     } catch { /* Preserve local history if the App is unavailable. */ }
   }
-  return historyPayload(key, limit, principal, before, { entries: localSorted, source: 'local', thread: null, localCount: local.length });
+  if (id) {
+    try {
+      const loaded = loadRolloutHistory(id, local, { limit, before });
+      if (loaded && !loaded.compressed && loaded.turns > 0) {
+        return historyPayload(key, limit, principal, before, { entries: loaded.entries, source: 'thread', thread: { id }, localCount: local.length, exhausted: loaded.exhausted });
+      }
+    } catch (error) {
+      console.error('Rollout history read failed:', error.message || error);
+    }
+  }
+  const found = id ? rolloutHistory.findRolloutFile(config.codexHome, id) : null;
+  let unread = false;
+  if (found?.compressed) unread = true;
+  else if (found) {
+    const bytes = rolloutHistory.rolloutFileSize(config.codexHome, id);
+    if (Number.isFinite(bytes) && bytes > 16 * 1024 * 1024) unread = true;
+  }
+  if (unread) console.error('Rollout history unread (compressed or too large for thread/read); not treating local lines as complete');
+  return historyPayload(key, limit, principal, before, { entries: localSorted, source: 'local', thread: found ? { id } : null, localCount: local.length, exhausted: !unread });
 }
 
 // ----- Codex thread lookup: sessions link existing threads -----

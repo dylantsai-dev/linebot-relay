@@ -9,6 +9,8 @@ node test/feishu-tests.js
 node test/in-process-tests.js
 node test/live-turn-tests.js
 node test/memory-caps-tests.js
+node test/live-state-tests.js
+node test/rollout-history-tests.js
 node test/appserver-tests.js
 node test/appserver-tests.js --sockets
 node <<'NODE'

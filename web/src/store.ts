@@ -1,6 +1,7 @@
 import { reactive, ref, computed, watch } from 'vue'
 import { fileSize } from './lib/format'
 import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode, Prompt, FeishuSettings } from './lib/types'
+import { shouldClearLive } from './lib/live-state'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 // Upload limits come from the server (/api/whoami); these are the fallbacks.
@@ -792,13 +793,25 @@ function onStreamEvent(key: string, name: string, data: any) {
     else {
       // Keep the live answer on screen briefly until history has it, but never wait on a hung
       // history read — that left 「正在思考」 up after the backend had already finished.
+      // Do not clear on non-terminal events (e.g. disconnected) or if history still says
+      // the thread is running, or if a newer turn has already started.
+      const status = data.status
+      if (!shouldClearLive({ eventStatus: status })) return
       state.threadRunning = false
       const ended = liveBuf
+      const endedId = ended?.turnId || data.turnId || ''
       setPrompts([])
       historySig = ''
-      const clear = () => { if (state.selected === key && (liveBuf === ended || !liveBuf)) setLive(null) }
-      const timer = window.setTimeout(clear, 2000)
-      void refreshHistory(key).catch(() => {}).finally(() => { window.clearTimeout(timer); clear() })
+      const clearIfSafe = (historyKnown = false, historyRunning = false) => {
+        const liveId = liveBuf?.turnId || state.live?.turnId || null
+        if (!shouldClearLive({ eventStatus: status, historyKnown, historyRunning, liveTurnId: liveId, endedTurnId: endedId })) return
+        if (state.selected === key && (liveBuf === ended || !liveBuf)) setLive(null)
+      }
+      const timer = window.setTimeout(() => clearIfSafe(false), 2000)
+      void refreshHistory(key).then(() => {
+        window.clearTimeout(timer)
+        clearIfSafe(true, state.threadRunning)
+      }).catch(() => { /* leave the 2s timer to clear if history never returns */ })
       void refreshSessions().catch(() => {})
     }
   } else if (name === 'queue') {
