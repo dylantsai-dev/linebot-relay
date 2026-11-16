@@ -1,6 +1,7 @@
 import { reactive, ref, computed, watch } from 'vue'
 import { fileSize } from './lib/format'
 import type { UsageSnapshot,  Session, HistoryEntry, HistoryResponse, PendingSend, DraftFile, Stats, RequestRow, Me, User, LiveTurn, LiveItem, CodexThread, QueueEntry, SendMode, Prompt, FeishuSettings } from './lib/types'
+import { shouldClearLive } from './lib/live-state'
 
 export const keyPattern = /^[A-Za-z0-9_.:-]{1,128}$/
 // Upload limits come from the server (/api/whoami); these are the fallbacks.
@@ -316,7 +317,7 @@ export async function refreshSessions() {
 
 // Last history seen per session, so switching back shows it at once (then refreshes) instead of a skeleton.
 const historyCache = new Map<string, { history: HistoryEntry[]; running: boolean; sig: string; hasMore: boolean; olderMore: boolean | null }>()
-const HISTORY_PAGE = 50
+const HISTORY_PAGE = 30
 const HISTORY_CACHE_MAX = 12
 const HISTORY_KEEP_MAX = 400
 function putHistoryCache(key: string, value: { history: HistoryEntry[]; running: boolean; sig: string; hasMore: boolean; olderMore: boolean | null }) {
@@ -402,11 +403,18 @@ export async function refreshHistory(key: string, signal?: AbortSignal) {
   state.historySource = data.source
   setQueue(data.queue || [])
   setPrompts(data.prompts || [])
-  // Polling fallback for the live turn when the stream is not connected.
-  if (!state.streaming) setLive(data.running && data.live ? data.live : null)
-  else if (!data.running && state.live && Date.now() - streamTouched > 5000) setLive(null)
-  // Diff by signature: identical polls leave reactive state (and the DOM) untouched.
-  const sig = JSON.stringify([data.history, !!data.running, !!data.has_more])
+  // Server idle wins over a stale thinking placeholder. Heartbeats used to keep streamTouched
+  // fresh, so the old 5s fallback almost never cleared a missed turn/completed.
+  if (!data.running) {
+    state.threadRunning = false
+    if (!data.live && state.live) setLive(null)
+  } else {
+    state.threadRunning = true
+    if (!state.streaming && data.live) setLive(data.live)
+  }
+  // Diff by a cheap signature: never JSON.stringify the whole page (it can be multiple MB).
+  const head = data.history[0], last = data.history.at(-1)
+  const sig = JSON.stringify([data.source, data.revision ?? null, data.local_count ?? null, data.history.length, head?.time ?? null, last?.time ?? null, last?.message_id ?? null, last?.text?.length ?? 0, !!data.running, !!data.has_more])
   if (sig === historySig) return
   historySig = sig
   // Keep older pages the user already scrolled up to: everything strictly older than the newest page,
@@ -771,7 +779,7 @@ function onStreamEvent(key: string, name: string, data: any) {
     setLive(data.live || null)
     if (data.queue) setQueue(data.queue)
     if (Array.isArray(data.prompts)) setPrompts(data.prompts)
-    if (data.running) state.threadRunning = true
+    state.threadRunning = !!data.running
   } else if (name === 'prompt') {
     if (data.prompt?.id) setPrompts([...state.prompts.filter(p => p.id !== data.prompt.id), data.prompt])
   } else if (name === 'prompt_resolved') {
@@ -783,17 +791,32 @@ function onStreamEvent(key: string, name: string, data: any) {
       void refreshHistory(key).catch(() => {})
     }
     else {
-      // Keep the live answer on screen until the final message is in history: swapping in the same
-      // tick avoids the blank gap + fade-in flash at the end of a turn.
+      // Keep the live answer on screen briefly until history has it, but never wait on a hung
+      // history read — that left 「正在思考」 up after the backend had already finished.
+      // Do not clear on non-terminal events (e.g. disconnected) or if history still says
+      // the thread is running, or if a newer turn has already started.
+      const status = data.status
+      if (!shouldClearLive({ eventStatus: status })) return
+      state.threadRunning = false
       const ended = liveBuf
+      const endedId = ended?.turnId || data.turnId || ''
       setPrompts([])
       historySig = ''
-      void refreshHistory(key).catch(() => {}).finally(() => { if (state.selected === key && liveBuf === ended) setLive(null) })
+      const clearIfSafe = (historyKnown = false, historyRunning = false) => {
+        const liveId = liveBuf?.turnId || state.live?.turnId || null
+        if (!shouldClearLive({ eventStatus: status, historyKnown, historyRunning, liveTurnId: liveId, endedTurnId: endedId })) return
+        if (state.selected === key && (liveBuf === ended || !liveBuf)) setLive(null)
+      }
+      const timer = window.setTimeout(() => clearIfSafe(false), 2000)
+      void refreshHistory(key).then(() => {
+        window.clearTimeout(timer)
+        clearIfSafe(true, state.threadRunning)
+      }).catch(() => { /* leave the 2s timer to clear if history never returns */ })
       void refreshSessions().catch(() => {})
     }
   } else if (name === 'queue') {
     setQueue(data.queue || [])
-    if (data.running) state.threadRunning = true
+    if ('running' in data) state.threadRunning = !!data.running
     void refreshSessions().catch(() => {})
   } else if (name === 'item') {
     const item = liveItem(data.item.id, data.item, data.turnId)

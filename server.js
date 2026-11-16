@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { URL } = require('node:url');
 const { AppServer, summarizeItem } = require('./lib/appserver');
+const rolloutHistory = require('./lib/rollout-history');
 const APPROVAL_MODES = ['ask', 'assist', 'full']; // session.approval_mode; mapped to turn/start params in lib/appserver.js
 const { readRequest, prepareAttachments, combineInput, parseUserContent, serveFile } = require('./lib/attachments');
 const { Users } = require('./lib/users');
@@ -348,47 +349,183 @@ function beforeOf(url) {
   if (!Number.isFinite(time)) throw failure('Invalid before', 400);
   return time;
 }
+function entryKey(entry) {
+  return `${entry.role}|${entry.time || ''}|${entry.message_id || ''}|${(entry.text || '').slice(0, 80)}`;
+}
+function mergeHistory(base, extra) {
+  if (!extra?.length) return base || [];
+  if (!base?.length) return [...extra];
+  const seen = new Set(base.map(entryKey));
+  const out = [...base];
+  for (const entry of extra) {
+    const key = entryKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0));
+}
+function historyRunning(key, id) {
+  return !!(live.get(key)?.running || (appserver && id && (appserver.activeTurnId(id) || appserver.threadState(id).status === 'active')));
+}
+function historyPayload(key, limit, principal, before, { entries, source, revision, thread, localCount, exhausted }) {
+  const roots = mediaRoots(key, thread || cachedThread(key));
+  const page = historyPage(entries, limit, before);
+  const id = sessions[key]?.codex_session_id;
+  const running = historyRunning(key, id);
+  const liveTurn = running && appserver && id ? appserver.threadState(id).live : null;
+  return {
+    key, session: key,
+    history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)),
+    has_more: !!(page.has_more || exhausted === false), source, running, queue: publicQueue(key), prompts: sessionPrompts(key),
+    local_count: localCount,
+    ...(revision !== undefined ? { revision } : {}),
+    ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread || cachedThread(key)) } : {}),
+  };
+}
+function snapshotCovers(snap, limit, before) {
+  if (!snap?.entries) return false;
+  if (!before) return !!(snap.exhausted || snap.entries.length >= limit);
+  const page = historyPage(snap.entries, limit, before);
+  if (!page.entries.length) return !!snap.exhausted;
+  if (!snap.exhausted) {
+    const oldest = Date.parse(snap.entries[0]?.time);
+    if (!Number.isFinite(oldest) || oldest >= before) return false;
+  }
+  return true;
+}
+function loadRolloutHistory(id, local, { limit, before }) {
+  const found = rolloutHistory.findRolloutFile(config.codexHome, id);
+  if (!found) return null;
+  if (found.compressed) return { compressed: true };
+  const index = rolloutHistory.ensurePage(found.path, { limit, before, index: appserver ? appserver.rolloutIndex(id) : null });
+  if (appserver) appserver.setRolloutIndex(id, index);
+  let entries = threadHistory({ id, turns: index.turns }, local);
+  if (appserver) {
+    const captured = appserver.capturedTurns(id);
+    const active = appserver.activeCapturedTurn(id);
+    const extra = [...captured];
+    if (active && !extra.some(turn => turn.id === active.id)) extra.push(active);
+    if (extra.length) entries = mergeHistory(entries, threadHistory({ id, turns: extra }, local));
+    appserver.setHistorySnapshot(id, { entries, localCount: local.length, revision: appserver.threadState(id).revision, exhausted: index.exhausted, fromRollout: true });
+  }
+  return { entries, exhausted: index.exhausted, turns: index.turns.length };
+}
+function compileSnapshot(id, local, snap) {
+  const captured = appserver.capturedTurns(id);
+  const active = appserver.activeCapturedTurn(id);
+  const turns = [...captured];
+  if (active && !turns.some(turn => turn.id === active.id)) turns.push(active);
+  let entries = snap?.entries || [];
+  if (turns.length || entries.length) entries = mergeHistory(entries, threadHistory({ id, turns }, local));
+  else return null;
+  appserver.setHistorySnapshot(id, {
+    entries, localCount: local.length, revision: appserver.threadState(id).revision,
+    fromFullTurns: !!snap?.fromFullTurns, fromRollout: !!snap?.fromRollout, exhausted: snap?.exhausted,
+  });
+  return entries;
+}
 async function sessionHistory(key, limit, principal, before = null) {
   const local = readLines(path.join(historyDir, `${safeKey(key)}.jsonl`)).map(JSON.parse);
+  const localSorted = local.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0));
   const id = sessions[key]?.codex_session_id;
   if (appserver?.connected && id) {
     try {
-      // Hard cap so a wedged thread/resume cannot leave the console on a forever skeleton.
-      const cache = await Promise.race([
-        appserver.readThread(id),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('thread history timeout')), 8000)),
-      ]);
-      try {
-        const thread = { ...cache.thread, id };
-        const active = appserver.runningTurn(cache.thread);
-        const running = !!active || appserver.threadState(id).status === 'active';
-        const liveTurn = running ? (active ? appserver.seedLive(id, active) : appserver.threadState(id).live) : null;
-        const roots = mediaRoots(key, thread);
-        const page = historyPage(threadHistory(thread, local), limit, before);
-        return { key, session: key, history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)), has_more: page.has_more, source: 'thread', revision: cache.revision, running: running || !!live.get(key)?.running, queue: publicQueue(key), prompts: sessionPrompts(key),
-          ...(liveTurn ? { live: publicLive(liveTurn, key, principal, thread) } : {}) };
-      } finally {
-        // Do not keep multi‑MB turn lists resident between polls.
-        appserver.compactThreadCache(id);
+      const snap = appserver.historySnapshot(id);
+      const revision = appserver.threadState(id).revision;
+      const dirty = appserver.historyIsDirty(id) || (snap && snap.localCount !== local.length);
+      const active = !!appserver.activeTurnId(id) || !!appserver.activeCapturedTurn(id);
+      // A revision bump with no new turn (or a forced cache invalidation) must re-read.
+      // Item events during an in-progress turn also bump revision — those stay incremental.
+      const staleRevision = !!(snap && snap.revision !== revision && !active && !dirty);
+      // A compact snapshot (plus turns started/completed since) is enough for paging: do not
+      // call thread/read with includeTurns again, especially not on a hundred-MB rollout.
+      if (snap && !dirty && !staleRevision && snapshotCovers(snap, limit, before)) {
+        return historyPayload(key, limit, principal, before, { entries: snap.entries, source: 'thread', revision, thread: { id }, localCount: local.length, exhausted: snap.exhausted });
       }
+      if (snap && dirty && !staleRevision && snapshotCovers(snap, limit, before)) {
+        const entries = compileSnapshot(id, local, snap);
+        if (entries) return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length, exhausted: snap.exhausted });
+      }
+      try {
+        const loaded = loadRolloutHistory(id, local, { limit, before });
+        // Empty rollout stubs (tests / not-yet-flushed threads) must not hide thread/read.
+        // A file with real turns is a faithful page and avoids hitching the App WebSocket.
+        if (loaded && !loaded.compressed && loaded.turns > 0) {
+          return historyPayload(key, limit, principal, before, { entries: loaded.entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length, exhausted: loaded.exhausted });
+        }
+      } catch (error) {
+        console.error('Rollout history read failed:', error.message || error);
+        // A huge rollout must not silently collapse to local user-only lines.
+      }
+      if ((staleRevision || !snap) && appserver.canReadFullTurns(id, { rolloutBytes: rolloutSize(id) })) {
+        try {
+          // Hard cap so a wedged thread/resume cannot leave the console on a forever skeleton.
+          const cache = await Promise.race([
+            appserver.readThread(id),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('thread history timeout')), 8000)),
+          ]);
+          try {
+            const thread = { ...cache.thread, id };
+            const entries = threadHistory(thread, local);
+            appserver.setHistorySnapshot(id, { entries, localCount: local.length, revision: cache.revision, fromFullTurns: true, exhausted: true });
+            return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: cache.revision, thread, localCount: local.length });
+          } finally {
+            // Do not keep multi‑MB turn lists resident between polls.
+            appserver.compactThreadCache(id);
+          }
+        } catch {
+          appserver.noteFullTurnsFailure(id);
+          // A forced stale revision whose re-read failed: fall back to local, not a stale snapshot.
+          if (staleRevision) {
+            return historyPayload(key, limit, principal, before, { entries: localSorted, source: 'local', thread: null, localCount: local.length });
+          }
+        }
+      }
+      const entries = compileSnapshot(id, local, snap);
+      if (entries) return historyPayload(key, limit, principal, before, { entries, source: 'thread', revision: appserver.threadState(id).revision, thread: { id }, localCount: local.length });
     } catch { /* Preserve local history if the App is unavailable. */ }
   }
-  const roots = mediaRoots(key, null);
-  const page = historyPage(local.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0)), limit, before);
-  return { key, session: key, history: page.entries.map(entry => decorateEntry(entry, key, principal, roots)), has_more: page.has_more, source: 'local', running: !!live.get(key)?.running, queue: publicQueue(key), prompts: sessionPrompts(key) };
+  if (id) {
+    try {
+      const loaded = loadRolloutHistory(id, local, { limit, before });
+      if (loaded && !loaded.compressed && loaded.turns > 0) {
+        return historyPayload(key, limit, principal, before, { entries: loaded.entries, source: 'thread', thread: { id }, localCount: local.length, exhausted: loaded.exhausted });
+      }
+    } catch (error) {
+      console.error('Rollout history read failed:', error.message || error);
+    }
+  }
+  const found = id ? rolloutHistory.findRolloutFile(config.codexHome, id) : null;
+  let unread = false;
+  if (found?.compressed) unread = true;
+  else if (found) {
+    const bytes = rolloutHistory.rolloutFileSize(config.codexHome, id);
+    if (Number.isFinite(bytes) && bytes > 16 * 1024 * 1024) unread = true;
+  }
+  if (unread) console.error('Rollout history unread (compressed or too large for thread/read); not treating local lines as complete');
+  return historyPayload(key, limit, principal, before, { entries: localSorted, source: 'local', thread: found ? { id } : null, localCount: local.length, exhausted: !unread });
 }
 
 // ----- Codex thread lookup: sessions link existing threads -----
 const THREAD_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 function validThreadId(id) { return typeof id === 'string' && THREAD_ID.test(id); }
 function rolloutExists(id) {
-  const suffix = `-${id.toLowerCase()}.jsonl`;
+  return rolloutSize(id) !== null;
+}
+function rolloutSize(id) {
+  if (!id) return null;
+  const needle = `-${id.toLowerCase()}.jsonl`;
   for (const dir of ['sessions', 'archived_sessions']) {
     let names;
     try { names = fs.readdirSync(path.join(config.codexHome, dir), { recursive: true }); } catch { continue; }
-    if (names.some(name => String(name).toLowerCase().endsWith(suffix))) return true;
+    for (const name of names) {
+      const lower = String(name).toLowerCase();
+      if (!lower.endsWith(needle) && !lower.endsWith(needle + '.zst')) continue;
+      try { return fs.statSync(path.join(config.codexHome, dir, name)).size; } catch { return null; }
+    }
   }
-  return false;
+  return null;
 }
 // Resolves when Codex knows the thread; otherwise throws 404 without creating anything.
 async function verifyThread(id) {
@@ -1175,10 +1312,11 @@ function streamSession(req, res, key, principal) {
     else push('prompt_resolved', { id: data.id, reason: data.reason });
     flush();
   }) : () => {};
-  // Joined mid-turn (e.g. relay restarted): seed the live buffer from the thread snapshot.
+  // Joined mid-turn (e.g. relay restarted): reuse the in-memory live buffer. Never thread/read
+  // includeTurns here — a large rollout would stall the same socket that streams this turn.
   const id = sessions[key]?.codex_session_id;
   if (appserver?.connected && id && !appserver.threads.get(id)?.live && appserver.threads.get(id)?.status === 'active') {
-    appserver.readThread(id).then(cache => { const turn = appserver.runningTurn(cache.thread); if (turn && appserver.seedLive(id, turn)) snapshot(); }).catch(() => {});
+    snapshot();
   }
   const heartbeat = setInterval(() => {
     // A revoked login or lost grant ends the stream.
@@ -1433,7 +1571,7 @@ const server = http.createServer(async (req, res) => {
           send(res, 200, { session: publicSession({ key, ...sessions[key] }, principal) }); return;
         }
         if (!userCanUse(principal, key)) throw failure('会话不存在', 404);
-        if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 50, 550), principal, beforeOf(url))); return; }
+        if (req.method === 'GET' && match[2] === '/history') { send(res, 200, await sessionHistory(key, limitOf(url, 30, 550), principal, beforeOf(url))); return; }
         // Answer an approval / question card: { decision } or { answers: { questionId: string | string[] } }.
         if (req.method === 'POST' && match[2]?.startsWith('/prompts/')) {
           const promptId = match[2].slice(9), threadId = sessions[key]?.codex_session_id;

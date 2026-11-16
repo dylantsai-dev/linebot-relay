@@ -37,4 +37,19 @@ app.forgetThread('gone');
 assert.equal(app.threads.has('gone'), false);
 assert.equal(app.inProgress.has('turn-x'), false);
 
+assert.equal(app.canReadFullTurns('small', { rolloutBytes: 1024 }), true);
+assert.equal(app.canReadFullTurns('huge', { rolloutBytes: 20 * 1024 * 1024 }), false);
+app.noteFullTurnsFailure('failed');
+assert.equal(app.canReadFullTurns('failed', { rolloutBytes: 1024 }), false);
+
+app.captureCompletedTurn('th', {
+  id: 'turn-1', status: 'completed', startedAt: 1, completedAt: 2, durationMs: 1000,
+  items: [{ type: 'userMessage', content: [{ type: 'text', text: 'pwd' }] }, { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: '/root' }],
+});
+assert.equal(app.capturedTurns('th').length, 1);
+assert.equal(app.historyIsDirty('th'), true);
+app.setHistorySnapshot('th', { entries: [{ role: 'assistant', text: '/root', time: '2026-01-01T00:00:00.000Z' }], localCount: 1, revision: 1 });
+assert.equal(app.historyIsDirty('th'), false);
+assert.equal(app.historySnapshot('th').entries[0].text, '/root');
+
 console.log('memory caps tests passed');
