@@ -342,7 +342,7 @@ async function main() {
   const fullHistory = (await get('/api/sessions/one/history?limit=550')).body;
   assert.equal(fullHistory.has_more, false);
   assert.ok(fullHistory.history.length > 6);
-  assert.equal((await get('/api/sessions/one/history')).body.history.length, Math.min(50, fullHistory.history.length), 'default page is 50');
+  assert.equal((await get('/api/sessions/one/history')).body.history.length, Math.min(30, fullHistory.history.length), 'default page is 30');
   let pageRoute = '/api/sessions/one/history?limit=3', walked = [], guard = 0;
   for (;;) {
     const page = (await get(pageRoute)).body;
@@ -353,6 +353,16 @@ async function main() {
     pageRoute = `/api/sessions/one/history?limit=3&before=${encodeURIComponent(page.history[0].time)}`;
   }
   assert.deepEqual(walked.map(e => [e.role, e.time, e.text]), fullHistory.history.map(e => [e.role, e.time, e.text]), 'pages join into the full history');
+  const fullReads = () => fake.requests.filter(r => r.method === 'thread/read' && r.params?.includeTurns !== false);
+  const beforeFull = fullReads().length;
+  assert.ok(beforeFull >= 1, 'the first history read may include turns');
+  const localCount = fullHistory.local_count;
+  for (let i = 0; i < 5; i++) {
+    const again = (await get('/api/sessions/one/history?limit=5')).body;
+    assert.ok(again.history.length >= 1);
+    if (localCount !== undefined) assert.equal(again.local_count, localCount);
+  }
+  assert.equal(fullReads().length, beforeFull, 'later history polls reuse the compact snapshot');
   assert.equal((await get('/api/sessions/one/history?before=nope')).status, 400);
   for (const [message, error] of [['__failed__', 'recorded failure'], ['__interrupted__', 'Codex turn interrupted']]) {
     const result = await post('one', message);
@@ -481,7 +491,7 @@ async function main() {
   assert.equal(reads(), beforeFreshRead + 1, 'list refreshes after ten seconds');
   cachedThread.cache.time -= 31000;
   await get('/api/sessions/external/history');
-  assert.equal(reads(), beforeFreshRead + 2, 'history refreshes after thirty seconds');
+  assert.equal(reads(), beforeFreshRead + 1, 'history reuses the compact snapshot even after the thread cache expires');
   fake.hangRead = true;
   cachedThread.revision++;
   const beforeSlowRead = reads();

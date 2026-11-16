@@ -54,7 +54,7 @@ export interface LiveTurn { turnId: string; startedAt: string; items: LiveItem[]
 export type SendMode = 'queue' | 'steer'
 /** Relay-side queue entry: steered into the running turn, running, or waiting (排队). */
 export interface QueueEntry { id: string; text: string; mode: SendMode; status: 'steered' | 'running' | 'queued'; source: string; user: string | null; created_at: string; started_at?: string; fallback?: 'no_active_turn' | 'steer_rejected'; attachments: Attachment[] }
-export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; live?: LiveTurn; queue?: QueueEntry[]; has_more?: boolean; prompts?: Prompt[] }
+export interface HistoryResponse { key: string; session: string; history: HistoryEntry[]; source: 'thread' | 'local'; running: boolean; revision?: number; local_count?: number; live?: LiveTurn; queue?: QueueEntry[]; has_more?: boolean; prompts?: Prompt[] }
 /** A pending approval / question from the running turn, answered from the console. */
 export type PromptDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel'
 export interface PromptQuestion { id: string; header: string; question: string; options: { label: string; description: string }[]; isOther: boolean; isSecret: boolean }
